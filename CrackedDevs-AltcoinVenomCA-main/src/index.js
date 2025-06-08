@@ -393,7 +393,7 @@ async function processBlock(blockNumber) {
 				for (let [chatId, subscriptions] of userSubscriptions.entries()) {
 					for (let sub of subscriptions) {
 						const { eth, ticker } = JSON.parse(sub);
-
+            console.log(`Checking token: ${tokenData.symbol?.toUpperCase()} vs filter: ${ticker}`);
 						console.log("---------------CHAT MSG ------------------");
 						console.log("formatedBalance", formatedBalance);
 						console.log("isLPFilled", isLPFilled);

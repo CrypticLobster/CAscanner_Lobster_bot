@@ -212,234 +212,110 @@ async function getContractSource(contractAddress) {
   }
 }
 
-async function extractLinks(sourceCode) {
-  let website = "";
-  let telegram = "";
-  let x = ""; // for Twitter/X
-
-  const websiteMatch = sourceCode.match(
-    /([\w+]+\:\/\/)?([\w\d-]+\.)*[\w-]+[\.\:]\w+([\/\?\=\&\#\.]?[\w-]+)*\/?/gm
-  );
-  console.log(websiteMatch);
-
-  for (let link of websiteMatch) {
-    link = link.toLowerCase();
-    if (link.includes("t.me") && !telegram) {
-      telegram = link;
-    } else if (
-      (link.includes("x.com") ||
-        link.includes("twitter.com") ||
-        link.includes("Twitter")) &&
-      !x
-    ) {
-      x = link;
-    } else if (
-      !link.includes("openzeppelin") &&
-      !link.includes("eips") &&
-      !link.includes("Etherscan") &&
-      !link.includes("etherscan") &&
-      !website &&
-      !/^\d+$/.test(link)
-    ) {
-      website = link;
-    }
-    if (website && telegram && x) {
-      break;
-    }
-  }
-
-  // Check for nhttps and nhttp and replace them with https and http respectively
-  if (website.includes("nhttps")) {
-    website = website.replace("nhttps", "https");
-  } else if (website.includes("nhttp")) {
-    website = website.replace("nhttp", "http");
-  }
-
-  if (telegram.includes("nhttps")) {
-    telegram = telegram.replace("nhttps", "https");
-  } else if (telegram.includes("nhttp")) {
-    telegram = telegram.replace("nhttp", "http");
-  }
-
-  if (x.includes("nhttps")) {
-    x = x.replace("nhttps", "https");
-  } else if (x.includes("nhttp")) {
-    x = x.replace("nhttp", "http");
-  }
-
-  return { website, telegram, x };
-}
 
 async function processBlock(blockNumber) {
   console.log("Processing block:", blockNumber);
   await delay(3000);
-
   console.log("Fetching transactions...");
 
-  let { receipts } = await alchemy.core.getTransactionReceipts({
+  const { receipts } = await alchemy.core.getTransactionReceipts({
     blockNumber: blockNumber.toString(),
   });
-  // for (let response of receipts) {
-
-  // }
 
   for (let response of receipts) {
-    // console.log("response", response);
-    if (response.contractAddress) {
-      let tokenData;
+    if (!response.contractAddress) continue;
 
-      try {
-        tokenData = await alchemy.core.getTokenMetadata(
-          response.contractAddress
-        );
-      } catch (error) {
-        if (
-          error.code === "SERVER_ERROR" &&
-          error.error &&
-          error.error.code === -32602
-        ) {
-          console.error(
-            `Invalid token contract address: ${response.contractAddress}`
-          );
-          continue; // Skip to the next iteration of the loop
-        } else {
-          console.error(
-            `Error fetching token metadata for ${response.contractAddress}:`,
-            error
-          );
-          continue; // Skip to the next iteration of the loop
-        }
-      }
-
-      if (tokenData.decimals > 0) {
-        console.log("tokenData", tokenData);
-        console.log("got erc20 token", tokenData);
-        let balance = await alchemy.core.getBalance(
-          response.contractAddress,
-          "latest"
-        );
-        let formatedBalance = Utils.formatUnits(balance.toString(), "ether");
-        console.log("formatedBalance", formatedBalance);
-        let { deployerAddress } = await alchemy.core.findContractDeployer(
-          response.contractAddress
-        );
-        console.log("deployerAddress", deployerAddress);
-
-        console.log("-------------BLOCKING EXECUTION-------------");
-        await delay(60000);
-        console.log("-------------UNBLOCKING EXECUTION-------------");
-        // Check if the token is low risk using Honeypot API
-        // try {
-        //   const honeypotResponse = await axios.get(
-        //     `https://api.honeypot.is/v2/IsHoneypot?address=${response.contractAddress}&forceSimulateLiquidity=true&chainID=1`
-        //   );
-        //   const riskLevel = honeypotResponse.data.summary.risk;
-
-        //   if (riskLevel !== "low") {
-        //     console.log(
-        //       `Skipping high risk token: ${response.contractAddress}`
-        //     );
-        //     continue; // Skip to the next iteration if the token is not low risk
-        //   }
-        // } catch (error) {
-        //   console.error("Error checking Honeypot API:", error.response.data);
-        //   continue; // Skip to the next iteration if there's an error
-        // }
-        const isVerified = await isContractVerified(response.contractAddress);
-        console.log("isVerified", isVerified);
-
-        // verified contract
-        let website = null;
-        let telegram = null;
-        let x = null;
-        let sourceCode = null;
-
-        if (isVerified) {
-          sourceCode = await getContractSource(response.contractAddress);
-          // console.log("sourceCode", sourceCode);
-          if (sourceCode) {
-            const links = await extractLinks(sourceCode);
-            website = links.website;
-            telegram = links.telegram;
-            x = links.x;
-          }
-          console.log("website", website);
-          console.log("telegram", telegram);
-          console.log("x", x);
-        }
-
-        // unverified contract
-        const uniswapV2PairAddress = await getUniswapV2PairAddress(
-          response.contractAddress
-        );
-        console.log("uniswapV2PairAddress", uniswapV2PairAddress);
-        const lpBalance = await getLPBalance(uniswapV2PairAddress);
-        console.log("lpBalance", lpBalance);
-
-        const isLPFilled = lpBalance.gt(0);
-
-        let deployerBalance = await alchemy.core.getBalance(
-          deployerAddress,
-          "latest"
-        );
-        let formattedDeployerBalance = Utils.formatUnits(
-          deployerBalance.toString(),
-          "ether"
-        );
-
-        const formattedLPBalance = ethers.utils.formatEther(lpBalance);
-        console.log("formattedLPBalance", formattedLPBalance);
-
-				for (let [chatId, subscriptions] of userSubscriptions.entries()) {
-					for (let sub of subscriptions) {
-						const { eth, ticker } = JSON.parse(sub);
-            console.log(`Checking token: ${tokenData.symbol?.toUpperCase()} vs filter: ${ticker}`);
-						console.log("---------------CHAT MSG ------------------");
-						console.log("formatedBalance", formatedBalance);
-						console.log("isLPFilled", isLPFilled);
-
-						if (
-							formatedBalance >= eth ||
-							formattedLPBalance >= eth
-						) {
-							// Tickerfilter
-							if (ticker && tokenData.symbol.toUpperCase() !== ticker.toUpperCase()) {
-								continue;
-							}
-
-							console.log("sending to chatId", chatId);
-							console.log("formattedDeployerBalance", formattedDeployerBalance);
-							console.log("formattedLPBalance", formattedLPBalance);
-
-							const message = `*New Gem Detected* ✅\n\n*Name*: ${tokenData.name}\n*Symbol*: ${tokenData.symbol}\n\n*Link*: https://dexscreener.com/ethereum/${response.contractAddress}\n*Contract Address*: [${response.contractAddress}](https://etherscan.io/address/${response.contractAddress})\n*Deployer Address*: [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n*Deployer Balance*: \`${formattedDeployerBalance}\` ETH\n*Uniswap LP Balance*: \`${formattedLPBalance}\` ETH\n\n${website ? `[Website](${website})  ` : ""}${x ? `[X](${x})  ` : ""}${telegram ? `[Telegram](${telegram})  ` : ""}[Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
-
-							if (userChatId_messageThreadId.has(chatId)) {
-								for (let messageThreadId of userChatId_messageThreadId.get(chatId)) {
-									bot.sendMessage(chatId, message, {
-										message_thread_id: messageThreadId,
-										parse_mode: "Markdown",
-										disable_web_page_preview: true,
-									});
-								}
-							} else {
-								bot.sendMessage(chatId, message, {
-									parse_mode: "Markdown",
-									disable_web_page_preview: true,
-								});
-							}
-
-							console.log("we got the required address", response.contractAddress);
-						}
-					}
-				}
-
-      } else {
-        console.log("not erc20 token", tokenData);
+    let tokenData;
+    try {
+      tokenData = await alchemy.core.getTokenMetadata(response.contractAddress);
+    } catch (error) {
+      if (
+        error.code === "SERVER_ERROR" &&
+        error.error &&
+        error.error.code === -32602
+      ) {
+        console.error(`Invalid token contract address: ${response.contractAddress}`);
         continue;
+      } else {
+        console.error(`Error fetching token metadata for ${response.contractAddress}:`, error);
+        continue;
+      }
+    }
+
+    if (!tokenData || tokenData.decimals <= 0) {
+      console.log("not erc20 token", tokenData);
+      continue;
+    }
+
+    console.log("tokenData", tokenData);
+    let formatedBalance = Utils.formatUnits(
+      (await alchemy.core.getBalance(response.contractAddress, "latest")).toString(),
+      "ether"
+    );
+    console.log("formatedBalance", formatedBalance);
+
+    const { deployerAddress } = await alchemy.core.findContractDeployer(response.contractAddress);
+    console.log("deployerAddress", deployerAddress);
+
+    const isVerified = await isContractVerified(response.contractAddress);
+    console.log("isVerified", isVerified);
+
+    if (!isVerified) {
+      console.log("Skipping unverified contract:", response.contractAddress);
+      continue;
+    }
+
+    const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress);
+    console.log("uniswapV2PairAddress", uniswapV2PairAddress);
+
+    const lpBalance = await getLPBalance(uniswapV2PairAddress);
+    const isLPFilled = lpBalance.gt(0);
+    console.log("lpBalance", lpBalance);
+
+    const formattedDeployerBalance = Utils.formatUnits(
+      (await alchemy.core.getBalance(deployerAddress, "latest")).toString(),
+      "ether"
+    );
+    const formattedLPBalance = ethers.utils.formatEther(lpBalance);
+    console.log("formattedLPBalance", formattedLPBalance);
+
+    for (let [chatId, subscriptions] of userSubscriptions.entries()) {
+      for (let sub of subscriptions) {
+        const { eth, ticker } = JSON.parse(sub);
+        console.log(`Checking token: ${tokenData.symbol?.toUpperCase()} vs filter: ${ticker}`);
+        console.log("---------------CHAT MSG ------------------");
+        console.log("formatedBalance", formatedBalance);
+        console.log("isLPFilled", isLPFilled);
+
+        if (formatedBalance >= eth || formattedLPBalance >= eth) {
+          if (ticker && tokenData.symbol.toUpperCase() !== ticker.toUpperCase()) continue;
+
+          console.log("sending to chatId", chatId);
+
+          const message = `*New Gem Detected* ✅\n\n*Name*: ${tokenData.name}\n*Symbol*: ${tokenData.symbol}\n\n*Link*: https://dexscreener.com/ethereum/${response.contractAddress}\n*Contract Address*: [${response.contractAddress}](https://etherscan.io/address/${response.contractAddress})\n*Deployer Address*: [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n*Deployer Balance*: \`${formattedDeployerBalance}\` ETH\n*Uniswap LP Balance*: \`${formattedLPBalance}\` ETH\n\n[Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
+
+          if (userChatId_messageThreadId.has(chatId)) {
+            for (let messageThreadId of userChatId_messageThreadId.get(chatId)) {
+              bot.sendMessage(chatId, message, {
+                message_thread_id: messageThreadId,
+                parse_mode: "Markdown",
+                disable_web_page_preview: true,
+              });
+            }
+          } else {
+            bot.sendMessage(chatId, message, {
+              parse_mode: "Markdown",
+              disable_web_page_preview: true,
+            });
+          }
+
+          console.log("we got the required address", response.contractAddress);
+        }
       }
     }
   }
 }
+
 
 async function isContractVerified(contractAddress) {
   try {

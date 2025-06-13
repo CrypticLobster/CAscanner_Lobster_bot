@@ -92,7 +92,7 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
 
 
 
-//stop command with value and ticker, still missing ticker functionality
+//stop command with value and ticker 
 bot.onText(/\/stop(.+)?/, (msg, match) => {
   const chatId = msg.chat.id;
   const messageThreadId = msg.message_thread_id;
@@ -258,12 +258,9 @@ async function processBlock(blockNumber) {
     console.log("deployerAddress", deployerAddress);
 
     const isVerified = await isContractVerified(response.contractAddress);
-    console.log("isVerified", isVerified);
-
-    if (!isVerified) {
-      console.log("Skipping unverified contract:", response.contractAddress);
-      continue;
-    }
+    console.log("isVerified", isVerified); 
+    
+    let verificationStatus = isVerified ? "✅ Verified" : "⚠️ Not Verified";
 
     const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress);
     console.log("uniswapV2PairAddress", uniswapV2PairAddress);
@@ -292,7 +289,7 @@ async function processBlock(blockNumber) {
 
           console.log("sending to chatId", chatId);
 
-          const message = `*New Gem Detected* ✅\n\n*Name*: ${tokenData.name}\n*Symbol*: ${tokenData.symbol}\n\n*Link*: https://dexscreener.com/ethereum/${response.contractAddress}\n*Contract Address*: [${response.contractAddress}](https://etherscan.io/address/${response.contractAddress})\n*Deployer Address*: [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n*Deployer Balance*: \`${formattedDeployerBalance}\` ETH\n*Uniswap LP Balance*: \`${formattedLPBalance}\` ETH\n\n[Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
+          const message = `*New Gem Detected* ✅\n\n*Name*: ${tokenData.name}\n*Symbol*: ${tokenData.symbol}\n\n*Link*: https://dexscreener.com/ethereum/${response.contractAddress}\n*Contract Address*: [${response.contractAddress}](https://etherscan.io/address/${response.contractAddress})\n*Deployer Address*: [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n*Deployer Balance*: \`${formattedDeployerBalance}\` ETH\n*Uniswap LP Balance*: \`${formattedLPBalance}\` ETH\n\n${verificationStatus}\n[Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
 
           if (userChatId_messageThreadId.has(chatId)) {
             for (let messageThreadId of userChatId_messageThreadId.get(chatId)) {
@@ -332,7 +329,7 @@ async function isContractVerified(contractAddress) {
     console.error("Error checking contract verification:", error);
     return false;
   }
-}
+  }
 
 async function getUniswapV2PairAddress(tokenAddress) {
   const uniswapV2FactoryAddress = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";

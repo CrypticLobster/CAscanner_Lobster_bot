@@ -261,9 +261,10 @@ async function processBlock(blockNumber) {
     console.log("isVerified", isVerified);
 
     if (!isVerified) {
-      console.log("Skipping unverified contract:", response.contractAddress);
+      console.log("Unverified contract:", response.contractAddress);
       continue;
     }
+
 
     const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress);
     console.log("uniswapV2PairAddress", uniswapV2PairAddress);
@@ -291,8 +292,28 @@ async function processBlock(blockNumber) {
           if (ticker && tokenData.symbol.toUpperCase() !== ticker.toUpperCase()) continue;
 
           console.log("sending to chatId", chatId);
+          const verificationStatus = isVerified ? "✅ Verified" : "⚠️ Not Verified";
+          const sourceCode = await getContractSource(response.contractAddress);
+          const sniperInfo = analyzeSniperLogic(sourceCode);
 
-          const message = `*New Gem Detected* ✅\n\n*Name*: ${tokenData.name}\n*Symbol*: ${tokenData.symbol}\n\n*Link*: https://dexscreener.com/ethereum/${response.contractAddress}\n*Contract Address*: [${response.contractAddress}](https://etherscan.io/address/${response.contractAddress})\n*Deployer Address*: [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n*Deployer Balance*: \`${formattedDeployerBalance}\` ETH\n*Uniswap LP Balance*: \`${formattedLPBalance}\` ETH\n\n[Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
+          const message = `*New Gem Detected* ✅
+
+          *Name*: ${tokenData.name}
+          *Symbol*: ${tokenData.symbol}
+
+          *Link*: https://dexscreener.com/ethereum/${response.contractAddress}
+          *Contract Address*: [${response.contractAddress}](https://etherscan.io/address/${response.contractAddress})\`${response.contractAddress}\`
+          *Deployer Address*: [${deployerAddress}](https://etherscan.io/address/${deployerAddress})
+
+          *Deployer Balance*: \`${formattedDeployerBalance}\` ETH
+          *Uniswap LP Balance*: \`${formattedLPBalance}\` ETH
+
+          ${verificationStatus}
+
+          ${sniperInfo}
+
+          [Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
+
 
           if (userChatId_messageThreadId.has(chatId)) {
             for (let messageThreadId of userChatId_messageThreadId.get(chatId)) {
@@ -316,7 +337,7 @@ async function processBlock(blockNumber) {
   }
 }
 
-
+//Contract Verification Check Function
 async function isContractVerified(contractAddress) {
   try {
     const apiKey = process.env.ETHERSCAN_API_KEY;
@@ -334,6 +355,30 @@ async function isContractVerified(contractAddress) {
   }
 }
 
+const fs = require("fs");
+
+function analyzeSniperLogic(sourceCode) {
+  try {
+    const patterns = JSON.parse(fs.readFileSync("sniper-patterns.json", "utf8"));
+    const found = [];
+
+    for (let { label, pattern } of patterns) {
+      const regex = new RegExp(pattern, "i");
+      if (regex.test(sourceCode)) {
+        found.push(`✅ ${label}`);
+      }
+    }
+
+    if (found.length === 0) return "No sniper protections detected.";
+    return "*Sniper Checks Detected:*\n" + found.join("\n");
+  } catch (e) {
+    console.error("Error analyzing sniper logic:", e);
+    return "Sniper info: N/A";
+  }
+}
+
+
+//Uniswap v2 Pair Address Function
 async function getUniswapV2PairAddress(tokenAddress) {
   const uniswapV2FactoryAddress = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
   const uniswapV2FactoryABI = [

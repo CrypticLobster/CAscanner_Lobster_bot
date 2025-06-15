@@ -258,18 +258,9 @@ async function processBlock(blockNumber) {
     console.log("deployerAddress", deployerAddress);
 
     const isVerified = await isContractVerified(response.contractAddress);
-<<<<<<< HEAD
-    console.log("isVerified", isVerified);
-
-    if (!isVerified) {
-      console.log("Unverified contract:", response.contractAddress);
-      continue;
-    }
-=======
     console.log("isVerified", isVerified); 
     
     let verificationStatus = isVerified ? "✅ Verified" : "⚠️ Not Verified";
->>>>>>> 488b04c72fed1da83a3d2df24fbbe4bcfc2dcd8b
 
 
     const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress);
@@ -320,10 +311,6 @@ async function processBlock(blockNumber) {
 
           [Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
 
-<<<<<<< HEAD
-=======
-          const message = `*New Gem Detected* ✅\n\n*Name*: ${tokenData.name}\n*Symbol*: ${tokenData.symbol}\n\n*Link*: https://dexscreener.com/ethereum/${response.contractAddress}\n*Contract Address*: [${response.contractAddress}](https://etherscan.io/address/${response.contractAddress})\n*Deployer Address*: [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n*Deployer Balance*: \`${formattedDeployerBalance}\` ETH\n*Uniswap LP Balance*: \`${formattedLPBalance}\` ETH\n\n${verificationStatus}\n[Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
->>>>>>> 488b04c72fed1da83a3d2df24fbbe4bcfc2dcd8b
 
           if (userChatId_messageThreadId.has(chatId)) {
             for (let messageThreadId of userChatId_messageThreadId.get(chatId)) {

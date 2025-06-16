@@ -30,8 +30,8 @@ bot.setMyCommands([
   { command: "help", description: "Get available commands" },
 ]);
 
-const userSubscriptions = new Map();
-const userChatId_messageThreadId = new Map();
+const threadSubscriptions = new Map(); // key = `${chatId}:${messageThreadId}`
+
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -51,126 +51,112 @@ const helpMessage = `
 // If no ticker is provided, it defaults to ETH
 // If ticker is provided, it will be used in the notification message
 bot.onText(/\/start(.+)?/, async (msg, match) => {
-  //debugging
-  console.log("---------------------------------");
-  console.log("msg:", msg);
   const chatId = msg.chat.id;
-  console.log("---------------------------------");
-  console.log("msg:", msg);
-  //end debugging
-  
-  //constants start
   const input = match[1] ? match[1].trim().split(" ") : [];
   const ethValue = Number(input[0]) || 2.2;
   const optionalTicker = input[1] ? input[1].toUpperCase() : null;
 
-  if (!userSubscriptions.has(chatId)) {
-    userSubscriptions.set(chatId, new Set());
+  const threadId = msg.message_thread_id || "default";
+  const key = `${chatId}:${threadId}`;
+
+  if (!threadSubscriptions.has(key)) {
+    threadSubscriptions.set(key, new Set());
   }
 
-  userSubscriptions
-    .get(chatId)
-    .add(JSON.stringify({ eth: ethValue, ticker: optionalTicker }));
+  const subSet = threadSubscriptions.get(key);
+  subSet.add(JSON.stringify({ eth: ethValue, ticker: optionalTicker }));
 
-  if (msg.message_thread_id) {
-    if (!userChatId_messageThreadId.has(chatId)) {
-      userChatId_messageThreadId.set(chatId, new Set());
-    }
-    userChatId_messageThreadId.get(chatId).add(msg.message_thread_id);
-  }
-
-  console.log(`New subscription for chat ${chatId}:`, {
+  console.log(`New subscription for thread ${key}:`, {
     ethValue,
     ticker: optionalTicker,
   });
 
   let reply = `You will receive alerts for tokens with a balance ≥ ${ethValue} ETH`;
   if (optionalTicker) reply += ` and ticker '${optionalTicker}'`;
+  reply += `\n\n🔔 Total filters in this topic: ${subSet.size}`;
 
-  bot.sendMessage(chatId, reply);
+  const options = {
+    parse_mode: "Markdown",
+    ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
+  };
+
+  bot.sendMessage(chatId, reply, options);
 });
 
 
 
-//stop command with value and ticker 
+// stop command with value and optional ticker (per thread/topic)
 bot.onText(/\/stop(.+)?/, (msg, match) => {
   const chatId = msg.chat.id;
-  const messageThreadId = msg.message_thread_id;
+  const messageThreadId = msg.message_thread_id || "default";
+  const key = `${chatId}:${messageThreadId}`;
 
   const input = match[1] ? match[1].trim().split(" ") : [];
   const ethValue = Number(input[0]);
   const optionalTicker = input[1] ? input[1].toUpperCase() : null;
 
   if (!ethValue || isNaN(ethValue)) {
-    bot.sendMessage(chatId, "Please provide a valid ETH value to unsubscribe.");
+    bot.sendMessage(chatId, "Please provide a valid ETH value to unsubscribe.", {
+      ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
+    });
     return;
   }
 
   const subscriptionKey = JSON.stringify({ eth: ethValue, ticker: optionalTicker });
 
-  if (userSubscriptions.has(chatId)) {
-    const userSet = userSubscriptions.get(chatId);
-    if (userSet.has(subscriptionKey)) {
-      userSet.delete(subscriptionKey);
+  const threadSubs = threadSubscriptions.get(key);
 
-      const reply = `Unsubscribed from notifications for ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""}.`;
-      const options = messageThreadId
-        ? { message_thread_id: messageThreadId }
-        : {};
+  if (threadSubs && threadSubs.has(subscriptionKey)) {
+    threadSubs.delete(subscriptionKey);
 
-      bot.sendMessage(chatId, reply, options);
-    } else {
-      bot.sendMessage(
-        chatId,
-        "No matching subscription found for that value/ticker.",
-        messageThreadId ? { message_thread_id: messageThreadId } : {}
-      );
-    }
+    const reply = `Unsubscribed from notifications for ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""}.`;
+
+    bot.sendMessage(chatId, reply, {
+      ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
+    });
   } else {
-    const reply = "You don't have any active subscriptions.";
-    const options = messageThreadId
-      ? { message_thread_id: messageThreadId }
-      : {};
-    bot.sendMessage(chatId, reply, options);
+    const reply = "No matching subscription found for that value/ticker.";
+
+    bot.sendMessage(chatId, reply, {
+      ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
+    });
   }
 });
 
 
 
 
-//list command to show active subscriptions
-// It will show the ETH value and ticker if available
+
+// list command to show active subscriptions in the current topic
 bot.onText(/\/list/, (msg) => {
   const chatId = msg.chat.id;
-  const messageThreadId = msg.message_thread_id;
+  const messageThreadId = msg.message_thread_id || "default";
+  const key = `${chatId}:${messageThreadId}`;
 
-  if (userSubscriptions.has(chatId) && userSubscriptions.get(chatId).size > 0) {
-    const subscriptions = Array.from(userSubscriptions.get(chatId))
-      .map((s) => {
-        try {
-          const { eth, ticker } = JSON.parse(s);
-          return `• ≥ ${eth} ETH${ticker ? ` + ${ticker}` : ""}`;
-        } catch {
-          return `• Unknown subscription: ${s}`;
-        }
-      })
-      .join("\n");
+  const threadSubs = threadSubscriptions.get(key);
 
-    const reply = `Your active subscriptions:\n${subscriptions}`;
-    const options = {
-      parse_mode: "Markdown",
-      ...(messageThreadId && { message_thread_id: messageThreadId }),
-    };
+  const options = {
+    parse_mode: "Markdown",
+    ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
+  };
 
+  if (threadSubs && threadSubs.size > 0) {
+    const subscriptions = [...threadSubs].map((s) => {
+      try {
+        const { eth, ticker } = JSON.parse(s);
+        return `• ≥ ${eth} ETH${ticker ? ` + ${ticker}` : ""}`;
+      } catch {
+        return `• Unknown subscription: ${s}`;
+      }
+    }).join("\n");
+
+    const reply = `Your active subscriptions in this topic:\n${subscriptions}`;
     bot.sendMessage(chatId, reply, options);
   } else {
-    const reply = "You don't have any active subscriptions.";
-    const options = messageThreadId
-      ? { message_thread_id: messageThreadId }
-      : {};
-    bot.sendMessage(chatId, reply, options);
+    bot.sendMessage(chatId, "You don't have any active subscriptions in this topic.", options);
   }
 });
+
 
 
 
@@ -189,29 +175,50 @@ bot.onText(/\/help/, (msg) => {
 
 
 //FUNCTIONS
-// Function to get the source code of a contract from Etherscan
-async function getContractSource(contractAddress) {
-  console.log("------------------TRYING TO GET SOURCE CODE---------------");
-  console.log("contractAddress", contractAddress);
-  console.log("---------------------------------");
-  try {
-    const apiKey = process.env.ETHERSCAN_API_KEY;
-    const url = `https://api.etherscan.io/api?module=contract&action=getsourcecode&address=${contractAddress}&apikey=${apiKey}`;
+async function getVerifiedContractData(address, retries = 3, delay = 5000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await axios.get("https://api.etherscan.io/api", {
+        params: {
+          module: "contract",
+          action: "getsourcecode",
+          address,
+          apikey: process.env.ETHERSCAN_API_KEY,
+        }
+      });
 
-    const response = await axios.get(url);
+      const contractData = res.data.result[0];
 
-    if (response.data.status === "1" && response.data.result[0].SourceCode) {
-      return response.data.result[0].SourceCode;
-    } else {
-      console.log("Contract is not verified or source code is not available.");
-      return null;
+      const isVerified = contractData.SourceCode && contractData.SourceCode !== "";
+
+      if (isVerified) {
+        return {
+          verified: true,
+          abi: contractData.ABI,
+          contractName: contractData.ContractName,
+          sourceCode: contractData.SourceCode,
+          ...contractData,
+        };
+      }
+    } catch (err) {
+      console.error(`Etherscan fetch failed (attempt ${i + 1}):`, err.message);
     }
-  } catch (error) {
-    console.error("Error fetching contract source:", error);
-    return null;
+
+    if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, delay));
   }
+
+  return {
+    verified: false,
+    abi: null,
+    contractName: null,
+    sourceCode: null,
+  };
 }
 
+async function getEthBalanceFormatted(address) {
+  const raw = await alchemy.core.getBalance(address, "latest");
+  return Utils.formatUnits(raw.toString(), "ether");
+}
 
 async function processBlock(blockNumber) {
   console.log("Processing block:", blockNumber);
@@ -243,25 +250,23 @@ async function processBlock(blockNumber) {
     }
 
     if (!tokenData || tokenData.decimals <= 0) {
-      console.log("not erc20 token", tokenData);
+      console.log("Not an ERC20 token:", tokenData);
       continue;
     }
 
     console.log("tokenData", tokenData);
-    let formatedBalance = Utils.formatUnits(
-      (await alchemy.core.getBalance(response.contractAddress, "latest")).toString(),
-      "ether"
-    );
-    console.log("formatedBalance", formatedBalance);
+
+    const formattedTokenBalance = await getEthBalanceFormatted(response.contractAddress);
+    console.log("formattedTokenBalance", formattedTokenBalance);
 
     const { deployerAddress } = await alchemy.core.findContractDeployer(response.contractAddress);
     console.log("deployerAddress", deployerAddress);
 
-    const isVerified = await isContractVerified(response.contractAddress);
-    console.log("isVerified", isVerified); 
-    
-    let verificationStatus = isVerified ? "✅ Verified" : "⚠️ Not Verified";
-
+    const contractData = await getVerifiedContractData(response.contractAddress);
+    const isVerified = contractData.verified;
+    const verificationStatus = isVerified
+      ? `✅ Verified - ${contractData.contractName || "Unknown"}`
+      : "⚠️ Not Verified";
 
     const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress);
     console.log("uniswapV2PairAddress", uniswapV2PairAddress);
@@ -270,62 +275,39 @@ async function processBlock(blockNumber) {
     const isLPFilled = lpBalance.gt(0);
     console.log("lpBalance", lpBalance);
 
-    const formattedDeployerBalance = Utils.formatUnits(
-      (await alchemy.core.getBalance(deployerAddress, "latest")).toString(),
-      "ether"
-    );
+    const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress);
     const formattedLPBalance = ethers.utils.formatEther(lpBalance);
     console.log("formattedLPBalance", formattedLPBalance);
 
-    for (let [chatId, subscriptions] of userSubscriptions.entries()) {
+    // Loop door alle actieve threads (chatId:threadId → subscriptions)
+    for (let [key, subscriptions] of threadSubscriptions.entries()) {
+      const [chatId, threadId] = key.split(":");
+
       for (let sub of subscriptions) {
         const { eth, ticker } = JSON.parse(sub);
         console.log(`Checking token: ${tokenData.symbol?.toUpperCase()} vs filter: ${ticker}`);
         console.log("---------------CHAT MSG ------------------");
-        console.log("formatedBalance", formatedBalance);
+        console.log("formattedTokenBalance", formattedTokenBalance);
         console.log("isLPFilled", isLPFilled);
 
-        if (formatedBalance >= eth || formattedLPBalance >= eth) {
+        if (parseFloat(formattedTokenBalance) >= eth || parseFloat(formattedLPBalance) >= eth) {
           if (ticker && tokenData.symbol.toUpperCase() !== ticker.toUpperCase()) continue;
 
           console.log("sending to chatId", chatId);
-          const verificationStatus = isVerified ? "✅ Verified" : "⚠️ Not Verified";
-          const sourceCode = await getContractSource(response.contractAddress);
-          const sniperInfo = analyzeSniperLogic(sourceCode);
 
-          const message = `*New Gem Detected* ✅
+          const sniperInfo = contractData.sourceCode
+            ? analyzeSniperLogic(contractData.sourceCode)
+            : "Sniper info: N/A";
 
-          *Name*: ${tokenData.name}
-          *Symbol*: ${tokenData.symbol}
+          const message = `*New Gem Detected* ✅ | *Name*: ${tokenData.name} | *Symbol*: ${tokenData.symbol} | 🔗 [Dexscreener](https://dexscreener.com/ethereum/${response.contractAddress}) | 📜 [Contract](https://etherscan.io/address/${response.contractAddress}) \`${response.contractAddress}\` | 🧾 [Deployer](https://etherscan.io/address/${deployerAddress}) | 💰 *Deployer Balance*: \`${formattedDeployerBalance}\` ETH | 💧 *LP Balance*: \`${formattedLPBalance}\` ETH | ${verificationStatus} | ${sniperInfo} | 🕵️‍♂️ [Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
 
-          *Link*: https://dexscreener.com/ethereum/${response.contractAddress}
-          *Contract Address*: [${response.contractAddress}](https://etherscan.io/address/${response.contractAddress})\`${response.contractAddress}\`
-          *Deployer Address*: [${deployerAddress}](https://etherscan.io/address/${deployerAddress})
+          const options = {
+            parse_mode: "Markdown",
+            disable_web_page_preview: true,
+            ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
+          };
 
-          *Deployer Balance*: \`${formattedDeployerBalance}\` ETH
-          *Uniswap LP Balance*: \`${formattedLPBalance}\` ETH
-
-          ${verificationStatus}
-
-          ${sniperInfo}
-
-          [Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
-
-
-          if (userChatId_messageThreadId.has(chatId)) {
-            for (let messageThreadId of userChatId_messageThreadId.get(chatId)) {
-              bot.sendMessage(chatId, message, {
-                message_thread_id: messageThreadId,
-                parse_mode: "Markdown",
-                disable_web_page_preview: true,
-              });
-            }
-          } else {
-            bot.sendMessage(chatId, message, {
-              parse_mode: "Markdown",
-              disable_web_page_preview: true,
-            });
-          }
+          bot.sendMessage(chatId, message, options);
 
           console.log("we got the required address", response.contractAddress);
         }
@@ -334,23 +316,6 @@ async function processBlock(blockNumber) {
   }
 }
 
-//Contract Verification Check Function
-async function isContractVerified(contractAddress) {
-  try {
-    const apiKey = process.env.ETHERSCAN_API_KEY;
-    const url = `https://api.etherscan.io/api?module=contract&action=getabi&address=${contractAddress}&apikey=${apiKey}`;
-
-    const response = await axios.get(url);
-
-    return (
-      response.data.status === "1" &&
-      response.data.result !== "Contract source code not verified"
-    );
-  } catch (error) {
-    console.error("Error checking contract verification:", error);
-    return false;
-  }
-  }
 
 const fs = require("fs");
 

@@ -321,7 +321,9 @@ const fs = require("fs");
 
 function analyzeSniperLogic(sourceCode) {
   try {
-    const patterns = JSON.parse(fs.readFileSync("sniper-patterns.json", "utf8"));
+    const path = require("path");
+    const patterns = JSON.parse(fs.readFileSync(path.join(__dirname, "sniper-patterns.json"), "utf8"));
+
     const found = [];
 
     for (let { label, pattern } of patterns) {

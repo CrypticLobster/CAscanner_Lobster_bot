@@ -274,9 +274,10 @@ async function processBlock(blockNumber) {
     const lpBalance = await getLPBalance(uniswapV2PairAddress);
     const isLPFilled = lpBalance.gt(0);
     console.log("lpBalance", lpBalance);
-
+    const marketData = await calculateMarketCapAndPrice(uniswapV2PairAddress, response.contractAddress, tokenData.decimals);
     const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress);
     const formattedLPBalance = ethers.utils.formatEther(lpBalance);
+
     console.log("formattedLPBalance", formattedLPBalance);
 
     // Loop door alle actieve threads (chatId:threadId → subscriptions)
@@ -299,7 +300,8 @@ async function processBlock(blockNumber) {
             ? analyzeSniperLogic(contractData.sourceCode)
             : "Sniper info: N/A";
 
-          const message = `*🚨 New Token Detected!*\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n${verificationStatus}\n\n📜 *Contract:* [View on Etherscan](https://etherscan.io/address/${response.contractAddress})\n🔗 *Dexscreener:* [View Chart](https://dexscreener.com/ethereum/${response.contractAddress})\n🧾 *Deployer:* [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/ethereum?address=${response.contractAddress})\n\`${response.contractAddress}\``;
+          const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${response.contractAddress}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Etherscan](https://etherscan.io/address/${response.contractAddress})\n🔗 [View Chart](https://dexscreener.com/ethereum/${response.contractAddress})\n🧾 *Deployer:* [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/ethereum?address=${response.contractAddress})`;
+
           
           const options = {
             parse_mode: "Markdown",
@@ -410,6 +412,46 @@ async function main() {
       console.log("error in b2", e);
     }
   });
+
+  async function calculateMarketCapAndPrice(pairAddress, tokenAddress, decimals) {
+  if (!pairAddress || pairAddress === ethers.constants.AddressZero) return null;
+
+  const pairABI = [
+    "function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
+    "function token0() external view returns (address)",
+    "function token1() external view returns (address)"
+  ];
+
+  const pair = new ethers.Contract(pairAddress, pairABI, provider);
+  try {
+    const [reserve0, reserve1] = await pair.getReserves();
+    const token0 = await pair.token0();
+    const token1 = await pair.token1();
+
+    const wethAddress = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
+    let ethReserve, tokenReserve;
+    if (token0.toLowerCase() === wethAddress.toLowerCase()) {
+      ethReserve = reserve0;
+      tokenReserve = reserve1;
+    } else {
+      ethReserve = reserve1;
+      tokenReserve = reserve0;
+    }
+
+    const priceInETH = parseFloat(ethers.utils.formatUnits(ethReserve, 18)) / parseFloat(ethers.utils.formatUnits(tokenReserve, decimals));
+    const marketCap = parseFloat(ethers.utils.formatUnits(tokenReserve, decimals)) * priceInETH;
+
+    return {
+      priceInETH: priceInETH.toFixed(10),
+      marketCap: marketCap.toFixed(2),
+    };
+  } catch (e) {
+    console.error("Error calculating price and market cap:", e);
+    return null;
+  }
+}
+
 
   // testing data for development
 

@@ -299,23 +299,7 @@ async function processBlock(blockNumber) {
             ? analyzeSniperLogic(contractData.sourceCode)
             : "Sniper info: N/A";
 
-          const message = `
-            *🚨 New Token Detected!*\n
-            *Token:* ${tokenData.symbol} (${tokenData.name})
-            ${verificationStatus}
-
-            📜 *Contract:* [View on Etherscan](https://etherscan.io/address/${response.contractAddress})
-            🔗 *Dexscreener:* [View Chart](https://dexscreener.com/ethereum/${response.contractAddress})
-            🧾 *Deployer:* [${deployerAddress}](https://etherscan.io/address/${deployerAddress})
-
-            💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH
-            💧 *LP Balance:* \`${formattedLPBalance}\` ETH
-
-            ${sniperInfo}
-
-            🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/ethereum?address=${response.contractAddress})
-            \`${response.contractAddress}\`
-          `;
+          const message = `*🚨 New Token Detected!*\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n${verificationStatus}\n\n📜 *Contract:* [View on Etherscan](https://etherscan.io/address/${response.contractAddress})\n🔗 *Dexscreener:* [View Chart](https://dexscreener.com/ethereum/${response.contractAddress})\n🧾 *Deployer:* [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/ethereum?address=${response.contractAddress})\n\`${response.contractAddress}\``;
           
           const options = {
             parse_mode: "Markdown",

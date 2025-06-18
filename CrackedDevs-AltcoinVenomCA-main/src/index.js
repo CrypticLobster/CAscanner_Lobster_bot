@@ -220,6 +220,46 @@ async function getEthBalanceFormatted(address) {
   return Utils.formatUnits(raw.toString(), "ether");
 }
 
+async function calculateMarketCapAndPrice(pairAddress, tokenAddress, decimals) {
+  if (!pairAddress || pairAddress === ethers.constants.AddressZero) return null;
+
+  const pairABI = [
+    "function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
+    "function token0() external view returns (address)",
+    "function token1() external view returns (address)"
+  ];
+
+  const pair = new ethers.Contract(pairAddress, pairABI, provider);
+  try {
+    const [reserve0, reserve1] = await pair.getReserves();
+    const token0 = await pair.token0();
+    const token1 = await pair.token1();
+
+    const wethAddress = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+
+    let ethReserve, tokenReserve;
+    if (token0.toLowerCase() === wethAddress.toLowerCase()) {
+      ethReserve = reserve0;
+      tokenReserve = reserve1;
+    } else {
+      ethReserve = reserve1;
+      tokenReserve = reserve0;
+    }
+
+    const priceInETH = parseFloat(ethers.utils.formatUnits(ethReserve, 18)) / parseFloat(ethers.utils.formatUnits(tokenReserve, decimals));
+    const marketCap = parseFloat(ethers.utils.formatUnits(tokenReserve, decimals)) * priceInETH;
+
+    return {
+      priceInETH: priceInETH.toFixed(10),
+      marketCap: marketCap.toFixed(2),
+    };
+  } catch (e) {
+    console.error("Error calculating price and market cap:", e);
+    return null;
+  }
+}
+
+
 async function processBlock(blockNumber) {
   console.log("Processing block:", blockNumber);
   await delay(3000);
@@ -413,44 +453,7 @@ async function main() {
     }
   });
 
-  async function calculateMarketCapAndPrice(pairAddress, tokenAddress, decimals) {
-  if (!pairAddress || pairAddress === ethers.constants.AddressZero) return null;
 
-  const pairABI = [
-    "function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
-    "function token0() external view returns (address)",
-    "function token1() external view returns (address)"
-  ];
-
-  const pair = new ethers.Contract(pairAddress, pairABI, provider);
-  try {
-    const [reserve0, reserve1] = await pair.getReserves();
-    const token0 = await pair.token0();
-    const token1 = await pair.token1();
-
-    const wethAddress = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-
-    let ethReserve, tokenReserve;
-    if (token0.toLowerCase() === wethAddress.toLowerCase()) {
-      ethReserve = reserve0;
-      tokenReserve = reserve1;
-    } else {
-      ethReserve = reserve1;
-      tokenReserve = reserve0;
-    }
-
-    const priceInETH = parseFloat(ethers.utils.formatUnits(ethReserve, 18)) / parseFloat(ethers.utils.formatUnits(tokenReserve, decimals));
-    const marketCap = parseFloat(ethers.utils.formatUnits(tokenReserve, decimals)) * priceInETH;
-
-    return {
-      priceInETH: priceInETH.toFixed(10),
-      marketCap: marketCap.toFixed(2),
-    };
-  } catch (e) {
-    console.error("Error calculating price and market cap:", e);
-    return null;
-  }
-}
 
 
   // testing data for development

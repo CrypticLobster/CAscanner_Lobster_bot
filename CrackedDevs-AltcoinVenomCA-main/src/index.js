@@ -299,8 +299,24 @@ async function processBlock(blockNumber) {
             ? analyzeSniperLogic(contractData.sourceCode)
             : "Sniper info: N/A";
 
-          const message = `*New Gem Detected* ✅ | *Name*: ${tokenData.name} | *Symbol*: ${tokenData.symbol} | 🔗 [Dexscreener](https://dexscreener.com/ethereum/${response.contractAddress}) | 📜 [Contract](https://etherscan.io/address/${response.contractAddress}) \`${response.contractAddress}\` | 🧾 [Deployer](https://etherscan.io/address/${deployerAddress}) | 💰 *Deployer Balance*: \`${formattedDeployerBalance}\` ETH | 💧 *LP Balance*: \`${formattedLPBalance}\` ETH | ${verificationStatus} | ${sniperInfo} | 🕵️‍♂️ [Honeypot](https://honeypot.is/ethereum?address=${response.contractAddress})`;
+          const message = `
+            *🚨 New Token Detected!*\n
+            *Token:* ${tokenData.symbol} (${tokenData.name})
+            ${verificationStatus}
 
+            📜 *Contract:* [View on Etherscan](https://etherscan.io/address/${response.contractAddress})
+            🔗 *Dexscreener:* [View Chart](https://dexscreener.com/ethereum/${response.contractAddress})
+            🧾 *Deployer:* [${deployerAddress}](https://etherscan.io/address/${deployerAddress})
+
+            💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH
+            💧 *LP Balance:* \`${formattedLPBalance}\` ETH
+
+            ${sniperInfo}
+
+            🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/ethereum?address=${response.contractAddress})
+            \`${response.contractAddress}\`
+          `;
+          
           const options = {
             parse_mode: "Markdown",
             disable_web_page_preview: true,
@@ -321,25 +337,27 @@ const fs = require("fs");
 
 function analyzeSniperLogic(sourceCode) {
   try {
-    const path = require("path");
-    const patterns = JSON.parse(fs.readFileSync(path.join(__dirname, "sniper-patterns.json"), "utf8"));
-
+    const patterns = JSON.parse(fs.readFileSync("src/sniper-patterns.json", "utf8")); // pad aangepast
     const found = [];
 
     for (let { label, pattern } of patterns) {
-      const regex = new RegExp(pattern, "i");
-      if (regex.test(sourceCode)) {
-        found.push(`✅ ${label}`);
+      const regex = new RegExp(`(\\b(?:${pattern})\\b)[^\\n;=]*[=:\\s]+([^;\\n]*)`, "gi");
+      const matches = [...sourceCode.matchAll(regex)];
+
+      if (matches.length > 0) {
+        const values = matches.map(match => `${match[1]} = ${match[2].trim()}`);
+        found.push(`✅ *${label}*\n${values.join("\n")}`);
       }
     }
 
     if (found.length === 0) return "No sniper protections detected.";
-    return "*Sniper Checks Detected:*\n" + found.join("\n");
+    return "*Sniper Checks Detected:*\n" + found.join("\n\n");
   } catch (e) {
     console.error("Error analyzing sniper logic:", e);
     return "Sniper info: N/A";
   }
 }
+
 
 
 //Uniswap v2 Pair Address Function

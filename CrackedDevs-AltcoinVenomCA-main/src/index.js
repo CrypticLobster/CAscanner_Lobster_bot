@@ -4,22 +4,13 @@ const TelegramBot = require("node-telegram-bot-api");
 const { ethers } = require("ethers");
 const axios = require("axios");
 require("dotenv").config();
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection:", reason);
+});
 
 const app = express();
 const port = process.env.PORT || 3000;
-
-// Optional Config object, but defaults to demo api-key and eth-mainnet.
-const settings = {
-  apiKey: process.env.ALCHEMY_API_KEY, // Replace with your Alchemy API Key.
-  network: Network.ETH_MAINNET, // Replace with your network.
-};
-
-const alchemy = new Alchemy(settings);
 const token = process.env.TELEGRAM_TOKEN;
-const provider = new ethers.providers.JsonRpcProvider(
-  process.env.ALCHEMY_RPC_URL
-);
-
 const bot = new TelegramBot(token, { polling: true });
 
 // Set available commands
@@ -53,8 +44,12 @@ const helpMessage = `
 bot.onText(/\/start(.+)?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const input = match[1] ? match[1].trim().split(" ") : [];
+
   const ethValue = Number(input[0]) || 2.2;
   const optionalTicker = input[1] ? input[1].toUpperCase() : null;
+  const chainInput = input[2] ? input[2].toLowerCase() : "eth";
+
+  const chainId = chainInput === "base" ? 8453 : 1; // default = ETH mainnet
 
   const threadId = msg.message_thread_id || "default";
   const key = `${chatId}:${threadId}`;
@@ -64,16 +59,11 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
   }
 
   const subSet = threadSubscriptions.get(key);
-  subSet.add(JSON.stringify({ eth: ethValue, ticker: optionalTicker }));
-
-  console.log(`New subscription for thread ${key}:`, {
-    ethValue,
-    ticker: optionalTicker,
-  });
+  subSet.add(JSON.stringify({ eth: ethValue, ticker: optionalTicker, chain: chainId }));
 
   let reply = `You will receive alerts for tokens with a balance ≥ ${ethValue} ETH`;
   if (optionalTicker) reply += ` and ticker '${optionalTicker}'`;
-  reply += `\n\n🔔 Total filters in this topic: ${subSet.size}`;
+  reply += ` on ${chainId === 1 ? "Ethereum" : "Base"}.\n\n🔔 Total filters in this topic: ${subSet.size}`;
 
   const options = {
     parse_mode: "Markdown",
@@ -82,7 +72,6 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
 
   bot.sendMessage(chatId, reply, options);
 });
-
 
 
 // stop command with value and optional ticker (per thread/topic)
@@ -175,20 +164,42 @@ bot.onText(/\/help/, (msg) => {
 
 
 //FUNCTIONS
-async function getVerifiedContractData(address, retries = 3, delay = 5000) {
+function getClientsForChain(chainId) {
+  const alchemyKey = process.env.ALCHEMY_API_KEY;
+
+  const network = chainId === 8453 ? Network.BASE_MAINNET : Network.ETH_MAINNET;
+
+  const alchemy = new Alchemy({
+    apiKey: alchemyKey,
+    network,
+  });
+
+  const rpcURL = chainId === 8453
+    ? `https://base-mainnet.g.alchemy.com/v2/${alchemyKey}`
+    : `https://eth-mainnet.g.alchemy.com/v2/${alchemyKey}`;
+
+  const provider = new ethers.providers.JsonRpcProvider(rpcURL);
+
+  return { alchemy, provider };
+}
+
+async function getVerifiedContractData(address, chainId, retries = 3, delay = 5000) {
+  const apiKey = process.env.ETHERSCAN_API_KEY;
+  const baseURL = "https://api.etherscan.io/v2/api";
+
   for (let i = 0; i < retries; i++) {
     try {
-      const res = await axios.get("https://api.etherscan.io/api", {
+      const res = await axios.get(baseURL, {
         params: {
           module: "contract",
           action: "getsourcecode",
           address,
-          apikey: process.env.ETHERSCAN_API_KEY,
-        }
+          chainid: chainId,
+          apikey: apiKey,
+        },
       });
 
       const contractData = res.data.result[0];
-
       const isVerified = contractData.SourceCode && contractData.SourceCode !== "";
 
       if (isVerified) {
@@ -201,7 +212,7 @@ async function getVerifiedContractData(address, retries = 3, delay = 5000) {
         };
       }
     } catch (err) {
-      console.error(`Etherscan fetch failed (attempt ${i + 1}):`, err.message);
+      console.error(`[${chainId}] Etherscan fetch failed (attempt ${i + 1}):`, err.message);
     }
 
     if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, delay));
@@ -215,55 +226,18 @@ async function getVerifiedContractData(address, retries = 3, delay = 5000) {
   };
 }
 
-async function getEthBalanceFormatted(address) {
-  const raw = await alchemy.core.getBalance(address, "latest");
+async function getEthBalanceFormatted(address, provider) {
+  const raw = await provider.getBalance(address, "latest");
   return Utils.formatUnits(raw.toString(), "ether");
 }
 
-async function calculateMarketCapAndPrice(pairAddress, tokenAddress, decimals) {
-  if (!pairAddress || pairAddress === ethers.constants.AddressZero) return null;
 
-  const pairABI = [
-    "function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
-    "function token0() external view returns (address)",
-    "function token1() external view returns (address)"
-  ];
-
-  const pair = new ethers.Contract(pairAddress, pairABI, provider);
-  try {
-    const [reserve0, reserve1] = await pair.getReserves();
-    const token0 = await pair.token0();
-    const token1 = await pair.token1();
-
-    const wethAddress = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-
-    let ethReserve, tokenReserve;
-    if (token0.toLowerCase() === wethAddress.toLowerCase()) {
-      ethReserve = reserve0;
-      tokenReserve = reserve1;
-    } else {
-      ethReserve = reserve1;
-      tokenReserve = reserve0;
-    }
-
-    const priceInETH = parseFloat(ethers.utils.formatUnits(ethReserve, 18)) / parseFloat(ethers.utils.formatUnits(tokenReserve, decimals));
-    const marketCap = parseFloat(ethers.utils.formatUnits(tokenReserve, decimals)) * priceInETH;
-
-    return {
-      priceInETH: priceInETH.toFixed(10),
-      marketCap: marketCap.toFixed(2),
-    };
-  } catch (e) {
-    console.error("Error calculating price and market cap:", e);
-    return null;
-  }
-}
-
-
-async function processBlock(blockNumber) {
-  console.log("Processing block:", blockNumber);
+async function processBlock(blockNumber, chainId) {
+  console.log(`[${chainId}] Processing block:`, blockNumber);
   await delay(3000);
-  console.log("Fetching transactions...");
+  console.log(`[${chainId}] Fetching transactions...`);
+
+  const { alchemy, provider } = getClientsForChain(chainId);
 
   const { receipts } = await alchemy.core.getTransactionReceipts({
     blockNumber: blockNumber.toString(),
@@ -281,68 +255,57 @@ async function processBlock(blockNumber) {
         error.error &&
         error.error.code === -32602
       ) {
-        console.error(`Invalid token contract address: ${response.contractAddress}`);
+        console.error(`[${chainId}] Invalid token contract address: ${response.contractAddress}`);
         continue;
       } else {
-        console.error(`Error fetching token metadata for ${response.contractAddress}:`, error);
+        console.error(`[${chainId}] Error fetching token metadata for ${response.contractAddress}:`, error);
         continue;
       }
     }
 
     if (!tokenData || tokenData.decimals <= 0) {
-      console.log("Not an ERC20 token:", tokenData);
+      console.log(`[${chainId}] Not an ERC20 token:`, tokenData);
       continue;
     }
 
     console.log("tokenData", tokenData);
 
-    const formattedTokenBalance = await getEthBalanceFormatted(response.contractAddress);
+    const formattedTokenBalance = await getEthBalanceFormatted(response.contractAddress, provider);
     console.log("formattedTokenBalance", formattedTokenBalance);
 
     const { deployerAddress } = await alchemy.core.findContractDeployer(response.contractAddress);
     console.log("deployerAddress", deployerAddress);
 
-    const contractData = await getVerifiedContractData(response.contractAddress);
+    const contractData = await getVerifiedContractData(response.contractAddress, chainId);
     const isVerified = contractData.verified;
-    const verificationStatus = isVerified
-      ? `✅ Verified - ${contractData.contractName || "Unknown"}`
-      : "⚠️ Not Verified";
 
-    const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress);
+    const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress, provider, chainId);
     console.log("uniswapV2PairAddress", uniswapV2PairAddress);
 
-    const lpBalance = await getLPBalance(uniswapV2PairAddress);
+    const lpBalance = await getLPBalance(uniswapV2PairAddress, provider);
     const isLPFilled = lpBalance.gt(0);
-    console.log("lpBalance", lpBalance);
-    const marketData = await calculateMarketCapAndPrice(uniswapV2PairAddress, response.contractAddress, tokenData.decimals);
-    const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress);
+    const marketData = await calculateMarketCapAndPrice(uniswapV2PairAddress, response.contractAddress, tokenData.decimals, provider);
+    const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress, provider);
     const formattedLPBalance = ethers.utils.formatEther(lpBalance);
-
-    console.log("formattedLPBalance", formattedLPBalance);
 
     // Loop door alle actieve threads (chatId:threadId → subscriptions)
     for (let [key, subscriptions] of threadSubscriptions.entries()) {
       const [chatId, threadId] = key.split(":");
 
       for (let sub of subscriptions) {
-        const { eth, ticker } = JSON.parse(sub);
-        console.log(`Checking token: ${tokenData.symbol?.toUpperCase()} vs filter: ${ticker}`);
-        console.log("---------------CHAT MSG ------------------");
-        console.log("formattedTokenBalance", formattedTokenBalance);
-        console.log("isLPFilled", isLPFilled);
+        const { eth, ticker, chain } = JSON.parse(sub);
+        if (chain !== chainId) continue;
 
         if (parseFloat(formattedTokenBalance) >= eth || parseFloat(formattedLPBalance) >= eth) {
           if (ticker && tokenData.symbol.toUpperCase() !== ticker.toUpperCase()) continue;
-
-          console.log("sending to chatId", chatId);
 
           const sniperInfo = contractData.sourceCode
             ? analyzeSniperLogic(contractData.sourceCode)
             : "Sniper info: N/A";
 
-          const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${response.contractAddress}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Etherscan](https://etherscan.io/address/${response.contractAddress})\n🔗 [View Chart](https://dexscreener.com/ethereum/${response.contractAddress})\n🧾 *Deployer:* [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/ethereum?address=${response.contractAddress})`;
+          const chainLabel = chainId === 1 ? "ethereum" : "base";
+          const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${response.contractAddress}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Etherscan](https://etherscan.io/address/${response.contractAddress})\n🔗 [View Chart](https://dexscreener.com/${chainLabel}/${response.contractAddress})\n🧾 *Deployer:* [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${response.contractAddress})`;
 
-          
           const options = {
             parse_mode: "Markdown",
             disable_web_page_preview: true,
@@ -350,13 +313,12 @@ async function processBlock(blockNumber) {
           };
 
           bot.sendMessage(chatId, message, options);
-
-          console.log("we got the required address", response.contractAddress);
         }
       }
     }
   }
 }
+
 
 
 const fs = require("fs");
@@ -387,55 +349,55 @@ function analyzeSniperLogic(sourceCode) {
 
 
 //Uniswap v2 Pair Address Function
-async function getUniswapV2PairAddress(tokenAddress) {
-  const uniswapV2FactoryAddress = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
-  const uniswapV2FactoryABI = [
+async function getUniswapV2PairAddress(tokenAddress, provider, chainId) {
+  const factoryAddress = chainId === 8453
+    ? "0x327Df1E6de05895d2ab08513aaDD9313Fe505d86" // Uniswap V2 Base
+    : "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"; // Uniswap V2 ETH
+
+  const factoryABI = [
     "function getPair(address tokenA, address tokenB) external view returns (address pair)",
   ];
 
-  const uniswapV2Factory = new ethers.Contract(
-    uniswapV2FactoryAddress,
-    uniswapV2FactoryABI,
-    provider
-  );
+  const factory = new ethers.Contract(factoryAddress, factoryABI, provider);
 
-  const wethAddress = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // WETH address on mainnet
+  const wethAddress = chainId === 8453
+    ? "0x4200000000000000000000000000000000000006"
+    : "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
   try {
-    const pairAddress = await uniswapV2Factory.getPair(
-      tokenAddress,
-      wethAddress
-    );
+    const pairAddress = await factory.getPair(tokenAddress, wethAddress);
     return pairAddress;
   } catch (error) {
-    console.error("Error getting Uniswap V2 pair address:", error);
+    console.error(`[${chainId}] Error getting pair address:`, error);
     return null;
   }
 }
 
-async function getLPBalance(pairAddress) {
+
+async function getLPBalance(pairAddress, provider) {
   if (!pairAddress || pairAddress === ethers.constants.AddressZero) {
     return ethers.BigNumber.from(0);
   }
 
-  const uniswapV2PairABI = [
+  const pairABI = [
     "function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
     "function token0() external view returns (address)",
   ];
 
-  const uniswapV2Pair = new ethers.Contract(
-    pairAddress,
-    uniswapV2PairABI,
-    provider
-  );
+  const pair = new ethers.Contract(pairAddress, pairABI, provider);
 
   try {
-    const [reserve0, reserve1] = await uniswapV2Pair.getReserves();
-    const token0 = await uniswapV2Pair.token0();
+    const [reserve0, reserve1] = await pair.getReserves();
+    const token0 = await pair.token0();
 
-    const wethAddress = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
-    const ethReserve =
-      token0.toLowerCase() === wethAddress.toLowerCase() ? reserve0 : reserve1;
+    const wethAddresses = [
+      "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // ETH
+      "0x4200000000000000000000000000000000000006"  // BASE
+    ];
+
+    const ethReserve = wethAddresses.includes(token0.toLowerCase())
+      ? reserve0
+      : reserve1;
 
     return ethers.BigNumber.from(ethReserve);
   } catch (error) {
@@ -445,20 +407,17 @@ async function getLPBalance(pairAddress) {
 }
 
 async function main() {
-  alchemy.ws.on("block", async (blockNumber) => {
-    try {
-      await processBlock(blockNumber);
-    } catch (e) {
-      console.log("error in b2", e);
-    }
+  // ETH
+  const { alchemy: ethAlchemy } = getClientsForChain(1);
+  ethAlchemy.ws.on("block", (blockNumber) => {
+    processBlock(blockNumber, 1);
   });
 
-
-
-
-  // testing data for development
-
-  // await processBlock(20901016);
+  // BASE
+  const { alchemy: baseAlchemy } = getClientsForChain(8453);
+  baseAlchemy.ws.on("block", (blockNumber) => {
+    processBlock(blockNumber, 8453);
+  });
 }
 
 // Error handling middleware

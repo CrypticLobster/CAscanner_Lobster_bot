@@ -231,6 +231,40 @@ async function getEthBalanceFormatted(address, provider) {
   return Utils.formatUnits(raw.toString(), "ether");
 }
 
+async function calculateMarketCapAndPrice(pairAddress, tokenAddress, tokenDecimals, provider) {
+  if (!pairAddress || pairAddress === ethers.constants.AddressZero) return null;
+
+  const pairABI = [
+    "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
+    "function token0() view returns (address)",
+  ];
+
+  const pair = new ethers.Contract(pairAddress, pairABI, provider);
+
+  try {
+    const [reserve0, reserve1] = await pair.getReserves();
+    const token0 = await pair.token0();
+
+    const tokenAddressLower = tokenAddress.toLowerCase();
+    const token0Lower = token0.toLowerCase();
+
+    const tokenReserve = token0Lower === tokenAddressLower ? reserve0 : reserve1;
+    const ethReserve = token0Lower === tokenAddressLower ? reserve1 : reserve0;
+
+    const priceInETH = parseFloat(ethers.utils.formatUnits(ethReserve, 18)) /
+                       parseFloat(ethers.utils.formatUnits(tokenReserve, tokenDecimals));
+
+    const marketCap = 2 * parseFloat(ethers.utils.formatUnits(ethReserve, 18));
+
+    return {
+      priceInETH: priceInETH.toFixed(10),
+      marketCap: marketCap.toFixed(2),
+    };
+  } catch (err) {
+    console.error("Error calculating market cap and price:", err);
+    return null;
+  }
+}
 
 async function processBlock(blockNumber, chainId) {
   console.log(`[${chainId}] Processing block:`, blockNumber);
@@ -303,8 +337,9 @@ async function processBlock(blockNumber, chainId) {
             ? analyzeSniperLogic(contractData.sourceCode)
             : "Sniper info: N/A";
 
+          const explorerURL = chainId === 8453 ? "https://basescan.org" : "https://etherscan.io";
           const chainLabel = chainId === 1 ? "ethereum" : "base";
-          const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${response.contractAddress}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Etherscan](https://etherscan.io/address/${response.contractAddress})\n🔗 [View Chart](https://dexscreener.com/${chainLabel}/${response.contractAddress})\n🧾 *Deployer:* [${deployerAddress}](https://etherscan.io/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${response.contractAddress})`;
+          const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${response.contractAddress}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Scan](${explorerURL}/address/${response.contractAddress})\n🔗 [View Chart](https://dexscreener.com/${chainLabel}/${response.contractAddress})\n🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${response.contractAddress})`;
 
           const options = {
             parse_mode: "Markdown",

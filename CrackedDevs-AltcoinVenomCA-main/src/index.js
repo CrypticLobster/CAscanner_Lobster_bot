@@ -401,9 +401,13 @@ async function getUniswapV2PairAddress(tokenAddress, provider, chainId) {
 
   try {
     const pairAddress = await factory.getPair(tokenAddress, wethAddress);
+    if (pairAddress === ethers.constants.AddressZero) {
+      console.log(`[${chainId}] No LP pair found for ${tokenAddress}`);
+      return null;
+    }
     return pairAddress;
   } catch (error) {
-    console.error(`[${chainId}] Error getting pair address:`, error);
+    console.error(`[${chainId}] Error getting pair address for ${tokenAddress}:`, error.reason || error.message);
     return null;
   }
 }

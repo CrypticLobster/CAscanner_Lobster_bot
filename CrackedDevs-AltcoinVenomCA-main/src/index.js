@@ -46,7 +46,9 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
   const input = match[1] ? match[1].trim().split(" ") : [];
 
   const ethValue = Number(input[0]) || 2.2;
-  const optionalTicker = input[1] ? input[1].toUpperCase() : null;
+  const rawTicker = input[1];
+  const optionalTicker = rawTicker && rawTicker.toLowerCase() !== "null" ? rawTicker.toUpperCase() : null;
+
   const chainInput = input[2] ? input[2].toLowerCase() : "eth";
 
   const chainId = chainInput === "base" ? 8453 : 1; // default = ETH mainnet
@@ -74,7 +76,6 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
 });
 
 
-// stop command with value and optional ticker (per thread/topic)
 bot.onText(/\/stop(.+)?/, (msg, match) => {
   const chatId = msg.chat.id;
   const messageThreadId = msg.message_thread_id || "default";
@@ -85,32 +86,47 @@ bot.onText(/\/stop(.+)?/, (msg, match) => {
   const optionalTicker = input[1] ? input[1].toUpperCase() : null;
 
   if (!ethValue || isNaN(ethValue)) {
-    bot.sendMessage(chatId, "Please provide a valid ETH value to unsubscribe.", {
+    return bot.sendMessage(chatId, "Please provide a valid ETH value to unsubscribe.", {
       ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
     });
-    return;
   }
-
-  const subscriptionKey = JSON.stringify({ eth: ethValue, ticker: optionalTicker });
 
   const threadSubs = threadSubscriptions.get(key);
 
-  if (threadSubs && threadSubs.has(subscriptionKey)) {
-    threadSubs.delete(subscriptionKey);
-
-    const reply = `Unsubscribed from notifications for ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""}.`;
-
-    bot.sendMessage(chatId, reply, {
+  if (!threadSubs || threadSubs.size === 0) {
+    return bot.sendMessage(chatId, "You have no active subscriptions in this topic.", {
       ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
     });
-  } else {
-    const reply = "No matching subscription found for that value/ticker.";
+  }
 
-    bot.sendMessage(chatId, reply, {
+  let found = false;
+
+  for (let sub of threadSubs) {
+    try {
+      const parsed = JSON.parse(sub);
+      const matchEth = parsed.eth === ethValue;
+      const matchTicker = parsed.ticker === optionalTicker || (!parsed.ticker && !optionalTicker);
+
+      if (matchEth && matchTicker) {
+        threadSubs.delete(sub);
+        found = true;
+        bot.sendMessage(chatId, `Unsubscribed from notifications for ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""}.`, {
+          ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
+        });
+        break;
+      }
+    } catch (e) {
+      console.error("Failed to parse subscription:", e);
+    }
+  }
+
+  if (!found) {
+    bot.sendMessage(chatId, "No matching subscription found for that value/ticker.", {
       ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
     });
   }
 });
+
 
 
 

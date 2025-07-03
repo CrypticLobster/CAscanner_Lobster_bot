@@ -83,7 +83,10 @@ bot.onText(/\/stop(.+)?/, (msg, match) => {
 
   const input = match[1] ? match[1].trim().split(" ") : [];
   const ethValue = Number(input[0]);
-  const optionalTicker = input[1] ? input[1].toUpperCase() : null;
+  const rawTicker = input[1];
+  const optionalTicker = rawTicker && rawTicker.toLowerCase() !== "null" ? rawTicker.toUpperCase() : null;
+  const chainInput = input[2] ? input[2].toLowerCase() : "eth";
+  const chainId = chainInput === "base" ? 8453 : 1;
 
   if (!ethValue || isNaN(ethValue)) {
     return bot.sendMessage(chatId, "Please provide a valid ETH value to unsubscribe.", {
@@ -106,11 +109,12 @@ bot.onText(/\/stop(.+)?/, (msg, match) => {
       const parsed = JSON.parse(sub);
       const matchEth = parsed.eth === ethValue;
       const matchTicker = parsed.ticker === optionalTicker || (!parsed.ticker && !optionalTicker);
+      const matchChain = parsed.chain === chainId;
 
-      if (matchEth && matchTicker) {
+      if (matchEth && matchTicker && matchChain) {
         threadSubs.delete(sub);
         found = true;
-        bot.sendMessage(chatId, `Unsubscribed from notifications for ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""}.`, {
+        bot.sendMessage(chatId, `Unsubscribed from notifications for ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""} on ${chainId === 1 ? "Ethereum" : "Base"}.`, {
           ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
         });
         break;
@@ -121,11 +125,12 @@ bot.onText(/\/stop(.+)?/, (msg, match) => {
   }
 
   if (!found) {
-    bot.sendMessage(chatId, "No matching subscription found for that value/ticker.", {
+    bot.sendMessage(chatId, "No matching subscription found for that value/ticker/chain.", {
       ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
     });
   }
 });
+
 
 
 
@@ -148,8 +153,9 @@ bot.onText(/\/list/, (msg) => {
   if (threadSubs && threadSubs.size > 0) {
     const subscriptions = [...threadSubs].map((s) => {
       try {
-        const { eth, ticker } = JSON.parse(s);
-        return `• ≥ ${eth} ETH${ticker ? ` + ${ticker}` : ""}`;
+        const { eth, ticker, chain } = JSON.parse(s);
+        const chainLabel = chain === 8453 ? "Base" : "Ethereum";
+        return `• ≥ ${eth} ETH${ticker ? ` + ${ticker}` : ""} on ${chainLabel}`;
       } catch {
         return `• Unknown subscription: ${s}`;
       }
@@ -161,6 +167,7 @@ bot.onText(/\/list/, (msg) => {
     bot.sendMessage(chatId, "You don't have any active subscriptions in this topic.", options);
   }
 });
+
 
 
 
@@ -201,7 +208,10 @@ function getClientsForChain(chainId) {
 
 async function getVerifiedContractData(address, chainId, retries = 3, delay = 5000) {
   const apiKey = process.env.ETHERSCAN_API_KEY;
-  const baseURL = "https://api.etherscan.io/v2/api";
+  const baseURL = chainId === 8453
+  ? "https://api.basescan.org/api"
+  : "https://api.etherscan.io/api";
+
 
   for (let i = 0; i < retries; i++) {
     try {

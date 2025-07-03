@@ -401,32 +401,69 @@ function analyzeSniperLogic(sourceCode) {
 
 //Uniswap v2 Pair Address Function
 async function getUniswapV2PairAddress(tokenAddress, provider, chainId) {
-  const factoryAddress = chainId === 8453
-    ? "0x327Df1E6de05895d2ab08513aaDD9313Fe505d86" // Uniswap V2 Base
-    : "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"; // Uniswap V2 ETH
-
   const factoryABI = [
     "function getPair(address tokenA, address tokenB) external view returns (address pair)",
   ];
 
-  const factory = new ethers.Contract(factoryAddress, factoryABI, provider);
-
   const wethAddress = chainId === 8453
-    ? "0x4200000000000000000000000000000000000006"
-    : "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+    ? "0x4200000000000000000000000000000000000006" // WETH op Base
+    : "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // WETH op ETH
+
+  if (chainId === 8453) {
+    // Aerodrome factory
+    const aerodromeFactory = new ethers.Contract(
+      "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
+      factoryABI,
+      provider
+    );
+
+    try {
+      const aerodromePair = await aerodromeFactory.getPair(tokenAddress, wethAddress);
+      if (aerodromePair && aerodromePair !== ethers.constants.AddressZero) {
+        console.log("Found pair on Aerodrome");
+        return aerodromePair;
+      }
+    } catch (err) {
+      console.error("[BASE] Aerodrome check failed:", err.message);
+    }
+
+    // fallback: Uniswap V2 on Base
+    const uniswapFactory = new ethers.Contract(
+      "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6",
+      factoryABI,
+      provider
+    );
+
+    try {
+      const uniswapPair = await uniswapFactory.getPair(tokenAddress, wethAddress);
+      if (uniswapPair && uniswapPair !== ethers.constants.AddressZero) {
+        console.log("Found pair on Uniswap V2 (Base)");
+        return uniswapPair;
+      }
+    } catch (err) {
+      console.error("[BASE] Uniswap V2 fallback failed:", err.message);
+    }
+
+    console.log("No LP pair found on Base for this token.");
+    return null;
+  }
+
+  // ETH default (Uniswap V2)
+  const ethFactory = new ethers.Contract(
+    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+    factoryABI,
+    provider
+  );
 
   try {
-    const pairAddress = await factory.getPair(tokenAddress, wethAddress);
-    if (pairAddress === ethers.constants.AddressZero) {
-      console.log(`[${chainId}] No LP pair found for ${tokenAddress}`);
-      return null;
-    }
-    return pairAddress;
-  } catch (error) {
-    console.error(`[${chainId}] Error getting pair address for ${tokenAddress}:`, error.reason || error.message);
+    const ethPair = await ethFactory.getPair(tokenAddress, wethAddress);
+    return ethPair !== ethers.constants.AddressZero ? ethPair : null;
+  } catch (err) {
+    console.error("[ETH] Uniswap V2 check failed:", err.message);
     return null;
   }
 }
+
 
 
 async function getLPBalance(pairAddress, provider) {

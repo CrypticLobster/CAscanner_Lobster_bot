@@ -409,7 +409,7 @@ function analyzeSniperLogic(sourceCode) {
 
 
 
-//Uniswap v2 Pair Address Function
+// Uniswap v2 Pair Address Function
 async function getUniswapV2PairAddress(tokenAddress, provider, chainId) {
   const factoryABI = [
     "function getPair(address tokenA, address tokenB) external view returns (address pair)",
@@ -434,7 +434,11 @@ async function getUniswapV2PairAddress(tokenAddress, provider, chainId) {
         return aerodromePair;
       }
     } catch (err) {
-      console.error("[BASE] Aerodrome check failed:", err.message);
+      if (err.code === "CALL_EXCEPTION") {
+        console.warn("[BASE] Aerodrome: No pool exists for this token.");
+      } else {
+        console.error("[BASE] Aerodrome check failed:", err.message);
+      }
     }
 
     // fallback: Uniswap V2 on Base
@@ -473,6 +477,7 @@ async function getUniswapV2PairAddress(tokenAddress, provider, chainId) {
     return null;
   }
 }
+
 
 
 

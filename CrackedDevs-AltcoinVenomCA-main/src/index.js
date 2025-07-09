@@ -305,6 +305,17 @@ async function processBlock(blockNumber, chainId) {
 
   for (let response of receipts) {
     if (!response.contractAddress) continue;
+    // Eerst checken of het contract verified is via Etherscan (voorkomt onnodige Alchemy calls)
+    const contractData = await getVerifiedContractData(response.contractAddress, chainId);
+    if (!contractData.verified) {
+      console.log(`[${chainId}] ❌ Skipping unverified contract: ${response.contractAddress}`);
+      continue;
+    }
+    // Check op ERC-20 compliance
+    if (!contractData.ABI || !contractData.ABI.includes("function totalSupply(")) {
+      console.log(`[${chainId}] ❌ Not a real ERC-20: ${response.contractAddress}`);
+      continue;
+    }
 
     let tokenData;
     try {
@@ -323,10 +334,11 @@ async function processBlock(blockNumber, chainId) {
       }
     }
 
-    if (!tokenData || tokenData.decimals <= 0) {
-      console.log(`[${chainId}] Not an ERC20 token:`, tokenData);
+    if (tokenData.decimals < 6 || tokenData.decimals > 18) {
+      console.log(`[${chainId}] ❌ Weird decimals, skipping:`, tokenData.decimals);
       continue;
     }
+
 
     console.log("tokenData", tokenData);
 
@@ -335,9 +347,6 @@ async function processBlock(blockNumber, chainId) {
 
     const { deployerAddress } = await alchemy.core.findContractDeployer(response.contractAddress);
     console.log("deployerAddress", deployerAddress);
-
-    const contractData = await getVerifiedContractData(response.contractAddress, chainId);
-    const isVerified = contractData.verified;
 
     const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress, provider, chainId);
     console.log("uniswapV2PairAddress", uniswapV2PairAddress);

@@ -304,9 +304,17 @@ async function processBlock(blockNumber, chainId) {
 
   const { alchemy, provider } = getClientsForChain(chainId);
 
-  const { receipts } = await alchemy.core.getTransactionReceipts({
+  const res = await alchemy.core.getTransactionReceipts({
     blockNumber: blockNumber.toString(),
   });
+
+  const receipts = res?.receipts || [];
+
+  if (!Array.isArray(receipts) || receipts.length === 0) {
+    console.log(`[${chainId}] No receipts found for block ${blockNumber}`);
+    return;
+  }
+
 
   const deployReceipts = receipts.filter(r =>
     r.status === 1 &&

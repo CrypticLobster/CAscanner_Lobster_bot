@@ -63,6 +63,9 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
   const subSet = threadSubscriptions.get(key);
   subSet.add(JSON.stringify({ eth: ethValue, ticker: optionalTicker, chain: chainId }));
 
+  console.log(`[${chainId}] New subscription: ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""} | Chat: ${chatId} | Thread: ${threadId}`);
+
+
   let reply = `You will receive alerts for tokens with a balance ≥ ${ethValue} ETH`;
   if (optionalTicker) reply += ` and ticker '${optionalTicker}'`;
   reply += ` on ${chainId === 1 ? "Ethereum" : "Base"}.\n\n🔔 Total filters in this topic: ${subSet.size}`;

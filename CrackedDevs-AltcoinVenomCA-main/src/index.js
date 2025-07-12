@@ -209,6 +209,12 @@ function getClientsForChain(chainId) {
   return { alchemy, provider };
 }
 
+async function getCreatedContractAddress(txHash, provider) {
+  const txReceipt = await provider.getTransactionReceipt(txHash);
+  return txReceipt?.contractAddress || null;
+}
+
+
 async function getVerifiedContractData(address, chainId, retries = 3, delay = 5000) {
   const apiKey = process.env.ETHERSCAN_API_KEY;
   const baseURL = chainId === 8453
@@ -303,77 +309,73 @@ async function processBlock(blockNumber, chainId) {
   console.log(`[${chainId}] 🔍 Fetching transaction receipts...`);
 
   const { alchemy, provider } = getClientsForChain(chainId);
-
   let receipts = [];
+
   try {
     const res = await alchemy.core.getTransactionReceipts({
       blockNumber: blockNumber.toString(),
     });
     receipts = res?.receipts || [];
   } catch (err) {
-    console.error(`[${chainId}] ❌ Error fetching receipts:`, err.message);
+    console.error(`[${chainId}] ❌ Failed to fetch receipts for block ${blockNumber}:`, err.message);
     return;
   }
 
   if (!Array.isArray(receipts) || receipts.length === 0) {
-    console.log(`[${chainId}] 💤 No receipts found for block ${blockNumber}`);
+    console.log(`[${chainId}] 🧠 Found 0 receipts`);
     return;
   }
 
-  const deployReceipts = receipts.filter(r =>
-    r.status === 1 &&
-    r.contractAddress &&
-    r.contractAddress !== ethers.constants.AddressZero &&
-    !scannedContracts.has(r.contractAddress)
-  );
+  const deployReceipts = receipts.filter(r => {
+    const looksLikeDeploy = r.contractAddress || r.to === null;
+    return (
+      r.status === 1 &&
+      looksLikeDeploy
+    );
+  });
 
-  console.log(`[${chainId}] 🧠 Found ${deployReceipts.length} new deployments`);
+  if (deployReceipts.length === 0) {
+    console.log(`[${chainId}] 🧠 Found 0 new deployments`);
+    return;
+  }
 
-  for (let response of deployReceipts) {
-    const ca = response.contractAddress;
+  for (let r of deployReceipts) {
+    const ca = r.contractAddress || await getCreatedContractAddress(r.transactionHash, provider);
+    if (!ca || scannedContracts.has(ca)) continue;
     scannedContracts.add(ca);
 
-    // 1. Check ABI for ERC-20
+    // 1. Haal ABI op en check op ERC-20
     const contractData = await getVerifiedContractData(ca, chainId);
     if (!contractData.ABI || !contractData.ABI.includes("function totalSupply(")) {
-      console.log(`[${chainId}] ❌ Not ERC-20 or unusable ABI: ${ca}`);
+      console.log(`[${chainId}] ❌ No usable ABI or not ERC-20: ${ca}`);
       continue;
     }
 
-    // 2. Check LP
+    // 2. LP check vóór zware calls
     const uniswapV2PairAddress = await getUniswapV2PairAddress(ca, provider, chainId);
     const lpBalance = await getLPBalance(uniswapV2PairAddress, provider);
     if (!uniswapV2PairAddress || lpBalance.lte(ethers.utils.parseEther("0.05"))) {
-      console.log(`[${chainId}] ❌ No LP or LP too small: ${ca}`);
+      console.log(`[${chainId}] ❌ No LP or LP too small, skipping: ${ca}`);
       continue;
     }
 
-    // 3. Deployer
-    let deployerAddress = "N/A";
-    try {
-      const deployerInfo = await alchemy.core.findContractDeployer(ca);
-      deployerAddress = deployerInfo.deployerAddress;
-    } catch (err) {
-      console.warn(`[${chainId}] ⚠️ Could not find deployer for ${ca}`);
-    }
-
+    // 3. Deployer info
+    const { deployerAddress } = await alchemy.core.findContractDeployer(ca);
     const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress, provider);
 
-    // 4. Token metadata
+    // 4. Metadata ophalen nu pas
     let tokenData;
     try {
       tokenData = await alchemy.core.getTokenMetadata(ca);
     } catch (error) {
-      console.error(`[${chainId}] ❌ Error fetching token metadata for ${ca}:`, error.message);
+      console.error(`[${chainId}] Error fetching token metadata for ${ca}:`, error.message);
       continue;
     }
 
-    if (!tokenData.symbol || tokenData.decimals < 6 || tokenData.decimals > 18) {
-      console.log(`[${chainId}] ❌ Skipping weird token: ${tokenData.symbol} (${tokenData.decimals} decimals)`);
+    if (tokenData.decimals < 6 || tokenData.decimals > 18) {
+      console.log(`[${chainId}] ❌ Weird decimals, skipping: ${tokenData.decimals}`);
       continue;
     }
-
-    console.log(`[${chainId}] ✅ ERC-20 Token: ${tokenData.symbol} — LP: ${ethers.utils.formatEther(lpBalance)} ETH`);
 
     const formattedTokenBalance = await getEthBalanceFormatted(ca, provider);
     const formattedLPBalance = ethers.utils.formatEther(lpBalance);
@@ -385,7 +387,7 @@ async function processBlock(blockNumber, chainId) {
       provider
     );
 
-    // 5. Notify subs
+    // 🔔 Notify all relevant subscriptions
     for (let [key, subscriptions] of threadSubscriptions.entries()) {
       const [chatId, threadId] = key.split(":");
 
@@ -417,6 +419,7 @@ async function processBlock(blockNumber, chainId) {
     }
   }
 }
+
 
 
 

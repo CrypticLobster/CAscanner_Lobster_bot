@@ -326,11 +326,11 @@ async function processBlock(blockNumber, chainId) {
     return;
   }
 
-  // DEBUG MODE: verwerk alle receipts i.p.v. alleen gefilterde deploys
-  const deployReceipts = receipts;
+  // Relaxed filter: laat geslaagde txs door met contractAddress of to === null
+  const deployReceipts = receipts.filter(r => r.status === 1 && (r.contractAddress || r.to === null));
 
   if (deployReceipts.length === 0) {
-    console.log(`[${chainId}] 🧠 Found 0 deployments`);
+    console.log(`[${chainId}] 🧠 Found 0 new deployments`);
     return;
   }
 
@@ -346,19 +346,11 @@ async function processBlock(blockNumber, chainId) {
       continue;
     }
 
-    // 2. LP check vóór zware calls
-    const uniswapV2PairAddress = await getUniswapV2PairAddress(ca, provider, chainId);
-    const lpBalance = await getLPBalance(uniswapV2PairAddress, provider);
-    if (!uniswapV2PairAddress || lpBalance.lte(ethers.utils.parseEther("0.05"))) {
-      console.log(`[${chainId}] ❌ No LP or LP too small, skipping: ${ca}`);
-      continue;
-    }
-
-    // 3. Deployer info
+    // 2. Deployer info
     const { deployerAddress } = await alchemy.core.findContractDeployer(ca);
     const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress, provider);
 
-    // 4. Metadata ophalen nu pas
+    // 3. Metadata ophalen nu pas
     let tokenData;
     try {
       tokenData = await alchemy.core.getTokenMetadata(ca);
@@ -373,10 +365,9 @@ async function processBlock(blockNumber, chainId) {
     }
 
     const formattedTokenBalance = await getEthBalanceFormatted(ca, provider);
-    const formattedLPBalance = ethers.utils.formatEther(lpBalance);
 
     const marketData = await calculateMarketCapAndPrice(
-      uniswapV2PairAddress,
+      null, // geen LP meer
       ca,
       tokenData.decimals,
       provider
@@ -390,7 +381,7 @@ async function processBlock(blockNumber, chainId) {
         const { eth, ticker, chain } = JSON.parse(sub);
         if (chain !== chainId) continue;
 
-        if (parseFloat(formattedTokenBalance) >= eth || parseFloat(formattedLPBalance) >= eth) {
+        if (parseFloat(formattedTokenBalance) >= eth) {
           if (ticker && tokenData.symbol.toUpperCase() !== ticker.toUpperCase()) continue;
 
           const sniperInfo = contractData.sourceCode
@@ -400,7 +391,7 @@ async function processBlock(blockNumber, chainId) {
           const explorerURL = chainId === 8453 ? "https://basescan.org" : "https://etherscan.io";
           const chainLabel = chainId === 1 ? "ethereum" : "base";
 
-          const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${ca}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Scan](${explorerURL}/address/${ca})\n🔗 [View Chart](https://dexscreener.com/${chainLabel}/${ca})\n🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${ca})`;
+          const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${ca}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Scan](${explorerURL}/address/${ca})\n🔗 [View Chart](https://dexscreener.com/${chainLabel}/${ca})\n🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${ca})`;
 
           const options = {
             parse_mode: "Markdown",
@@ -414,6 +405,7 @@ async function processBlock(blockNumber, chainId) {
     }
   }
 }
+
 
 
 

@@ -326,16 +326,11 @@ async function processBlock(blockNumber, chainId) {
     return;
   }
 
-  const deployReceipts = receipts.filter(r => {
-    const looksLikeDeploy = r.contractAddress || r.to === null;
-    return (
-      r.status === 1 &&
-      looksLikeDeploy
-    );
-  });
+  // DEBUG MODE: verwerk alle receipts i.p.v. alleen gefilterde deploys
+  const deployReceipts = receipts;
 
   if (deployReceipts.length === 0) {
-    console.log(`[${chainId}] 🧠 Found 0 new deployments`);
+    console.log(`[${chainId}] 🧠 Found 0 deployments`);
     return;
   }
 
@@ -419,6 +414,7 @@ async function processBlock(blockNumber, chainId) {
     }
   }
 }
+
 
 
 

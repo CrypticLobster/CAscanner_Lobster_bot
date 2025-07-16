@@ -299,13 +299,21 @@ async function processBlock(blockNumber, chainId) {
 
   const { alchemy, provider } = getClientsForChain(chainId);
 
-  const { receipts } = await alchemy.core.getTransactionReceipts({
-    blockNumber: blockNumber.toString(),
-  });
+  let receipts;
+  try {
+    const res = await alchemy.core.getTransactionReceipts({
+      blockNumber: blockNumber.toString(),
+    });
+    receipts = res.receipts || [];
+  } catch (err) {
+    console.error(`[${chainId}] ❌ Failed to fetch receipts:`, err.message);
+    return;
+  }
 
   for (let response of receipts) {
     if (!response.contractAddress) continue;
 
+    // 1. Token metadata ophalen
     let tokenData;
     try {
       tokenData = await alchemy.core.getTokenMetadata(response.contractAddress);
@@ -328,27 +336,25 @@ async function processBlock(blockNumber, chainId) {
       continue;
     }
 
-    console.log("tokenData", tokenData);
-
+    // 2. Balances & info
     const formattedTokenBalance = await getEthBalanceFormatted(response.contractAddress, provider);
-    console.log("formattedTokenBalance", formattedTokenBalance);
-
     const { deployerAddress } = await alchemy.core.findContractDeployer(response.contractAddress);
-    console.log("deployerAddress", deployerAddress);
-
     const contractData = await getVerifiedContractData(response.contractAddress, chainId);
-    const isVerified = contractData.verified;
 
+    // 3. LP check + price
     const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress, provider, chainId);
-    console.log("uniswapV2PairAddress", uniswapV2PairAddress);
-
     const lpBalance = await getLPBalance(uniswapV2PairAddress, provider);
     const isLPFilled = lpBalance.gt(0);
-    const marketData = await calculateMarketCapAndPrice(uniswapV2PairAddress, response.contractAddress, tokenData.decimals, provider);
+    const marketData = await calculateMarketCapAndPrice(
+      uniswapV2PairAddress,
+      response.contractAddress,
+      tokenData.decimals,
+      provider
+    );
     const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress, provider);
     const formattedLPBalance = ethers.utils.formatEther(lpBalance);
 
-    // Loop door alle actieve threads (chatId:threadId → subscriptions)
+    // 4. Loop door filters
     for (let [key, subscriptions] of threadSubscriptions.entries()) {
       const [chatId, threadId] = key.split(":");
 
@@ -356,8 +362,12 @@ async function processBlock(blockNumber, chainId) {
         const { eth, ticker, chain } = JSON.parse(sub);
         if (chain !== chainId) continue;
 
-        if (parseFloat(formattedTokenBalance) >= eth || parseFloat(formattedLPBalance) >= eth) {
-          if (ticker && tokenData.symbol.toUpperCase() !== ticker.toUpperCase()) continue;
+        const symbolMatch = ticker && tokenData.symbol.toUpperCase() === ticker.toUpperCase();
+        const ethThresholdReached =
+          parseFloat(formattedTokenBalance) >= eth || parseFloat(formattedLPBalance) >= eth;
+
+        if (symbolMatch || ethThresholdReached) {
+          if (ticker && !symbolMatch) continue;
 
           const sniperInfo = contractData.sourceCode
             ? analyzeSniperLogic(contractData.sourceCode)
@@ -365,6 +375,7 @@ async function processBlock(blockNumber, chainId) {
 
           const explorerURL = chainId === 8453 ? "https://basescan.org" : "https://etherscan.io";
           const chainLabel = chainId === 1 ? "ethereum" : "base";
+
           const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${response.contractAddress}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Scan](${explorerURL}/address/${response.contractAddress})\n🔗 [View Chart](https://dexscreener.com/${chainLabel}/${response.contractAddress})\n🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${response.contractAddress})`;
 
           const options = {
@@ -379,6 +390,7 @@ async function processBlock(blockNumber, chainId) {
     }
   }
 }
+
 
 
 

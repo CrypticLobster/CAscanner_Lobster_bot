@@ -115,7 +115,19 @@ async function processBlock(blockNumber) {
   const { alchemy, provider } = getClients();
   console.log(`📦 Processing block ${blockNumber}...`);
 
-  const { receipts } = await alchemy.core.getTransactionReceipts({ blockNumber: blockNumber.toString() });
+  let receipts = [];
+
+  try {
+    const res = await alchemy.core.getTransactionReceipts({ blockNumber: blockNumber.toString() });
+    receipts = res?.receipts || [];
+    if (!Array.isArray(receipts)) {
+      console.warn(`⚠️ Unexpected response format:`, res);
+      return;
+    }
+  } catch (err) {
+    console.error(`❌ Error fetching receipts for block ${blockNumber}:`, err.message);
+    return;
+  }
 
   for (let tx of receipts) {
     const ca = tx.contractAddress;
@@ -125,11 +137,14 @@ async function processBlock(blockNumber) {
     try {
       const contract = new ethers.Contract(ca, [
         "function symbol() view returns (string)",
-        "function name() view returns (string)",
+        "function name() view returns (string)"
       ], provider);
       symbol = await contract.symbol();
       name = await contract.name();
-    } catch { continue; }
+    } catch (err) {
+      console.warn(`⚠️ Could not read symbol/name for ${ca}:`, err.message);
+      continue;
+    }
 
     if (!symbol) continue;
     const upperSymbol = symbol.toUpperCase();
@@ -143,14 +158,14 @@ async function processBlock(blockNumber) {
       const [chatId, threadId] = key.split(":");
 
       for (let ticker of subs) {
-        const match = upperSymbol === ticker;
-        const allMode = ticker === "ALL";
+        const isMatch = upperSymbol === ticker;
+        const isAllMode = ticker === "ALL";
 
-        console.log(`🔎 Matching: ${upperSymbol} vs ${ticker} → match: ${match} | all: ${allMode}`);
+        console.log(`🔎 Checking: ${upperSymbol} vs ${ticker} → match: ${isMatch} | ALL: ${isAllMode}`);
 
-        if (!match && !allMode) continue;
+        if (!isMatch && !isAllMode) continue;
 
-        const msg = `🚨 *New Token Detected!*
+        const message = `🚨 *New Token Detected!*
 
 *Token:* ${symbol} (${name})
 📬 \`${ca}\`
@@ -158,16 +173,19 @@ async function processBlock(blockNumber) {
 📈 [Dexscreener](https://dexscreener.com/ethereum/${ca})
 💧 ${hasLP ? `LP Found: \`${lpAddress}\`` : `No LP`}`;
 
-        bot.sendMessage(chatId, msg, {
+        const options = {
           parse_mode: "Markdown",
           disable_web_page_preview: true,
           ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
-        });
-        console.log(`📨 Alert sent to ${chatId} for ${upperSymbol}`);
+        };
+
+        bot.sendMessage(chatId, message, options);
+        console.log(`📨 Alert sent to chat ${chatId} for ${upperSymbol}`);
       }
     }
   }
 }
+
 
 function main() {
   const { alchemy } = getClients();

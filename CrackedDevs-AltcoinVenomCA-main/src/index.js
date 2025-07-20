@@ -148,7 +148,10 @@ async function processBlock(blockNumber) {
 
     if (!symbol) continue;
     const upperSymbol = symbol.toUpperCase();
-    console.log(`➡️  CA: ${ca} | Symbol: ${upperSymbol}`);
+    console.log(`\n🔍 New token deployed`);
+    console.log(`📛 Symbol: ${upperSymbol}`);
+    console.log(`📬 Address: ${ca}`);
+    console.log(`📛 Name: ${name}`);
 
     const lpAddress = await getUniswapV2PairAddress(ca, provider);
     const hasLP = !!lpAddress;
@@ -161,7 +164,7 @@ async function processBlock(blockNumber) {
         const isMatch = upperSymbol === ticker;
         const isAllMode = ticker === "ALL";
 
-        console.log(`🔎 Checking: ${upperSymbol} vs ${ticker} → match: ${isMatch} | ALL: ${isAllMode}`);
+        console.log(`🔎 Checking ${upperSymbol} against subscription '${ticker}' → Match: ${isMatch} | All Mode: ${isAllMode}`);
 
         if (!isMatch && !isAllMode) continue;
 
@@ -180,7 +183,7 @@ async function processBlock(blockNumber) {
         };
 
         bot.sendMessage(chatId, message, options);
-        console.log(`📨 Alert sent to chat ${chatId} for ${upperSymbol}`);
+        console.log(`📨 Alert sent to chat ${chatId} for '${ticker}' (thread: ${threadId})`);
       }
     }
   }

@@ -305,7 +305,7 @@ async function processBlock(blockNumber, chainId) {
       console.error(`[${chainId}] Error on attempt ${attempt} to fetch receipts:`, e.message);
     }
 
-    await delay(3000);
+    await delay(60000);
   }
 
   if (!receipts || receipts.length === 0) {

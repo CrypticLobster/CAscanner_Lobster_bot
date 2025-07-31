@@ -306,7 +306,9 @@ async function processBlock(blockNumber, chainId) {
   console.log(`[${chainId}] Found ${receipts.length} receipts`);
 
   for (let response of receipts) {
-    if (!response.contractAddress) continue;
+    if (!response.contractAddress) 
+      console.log(`[${chainId}] Skipped: No contract address in tx receipt`, response);
+      continue;
 
     let tokenData;
     try {
@@ -325,10 +327,11 @@ async function processBlock(blockNumber, chainId) {
       }
     }
 
-    if (!tokenData || tokenData.decimals <= 0) {
-      console.log(`[${chainId}] Not an ERC20 token:`, tokenData);
+    if (!tokenData || !tokenData.symbol) {
+      console.log(`[${chainId}] Skipping: Missing symbol or not a token.`, tokenData);
       continue;
     }
+
 
     console.log("tokenData", tokenData);
 

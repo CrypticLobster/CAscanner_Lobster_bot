@@ -45,11 +45,11 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const input = match[1] ? match[1].trim().split(" ") : [];
 
-  const rawTicker = input[1] || input[0]; // ticker mag ook als 1e input
-  const optionalTicker = rawTicker && rawTicker.toLowerCase() !== "null" ? rawTicker.toUpperCase() : null;
+  let optionalTicker = null;
+  let chainId = 1;
 
-  const chainInput = input[2] || input[1];
-  const chainId = (chainInput && chainInput.toLowerCase() === "base") ? 8453 : 1;
+  if (input.length > 0) optionalTicker = input[0].toUpperCase();
+  if (input.length > 1 && input[1].toLowerCase() === "base") chainId = 8453;
 
   const threadId = msg.message_thread_id || "default";
   const key = `${chatId}:${threadId}`;
@@ -79,28 +79,29 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
 
 
 
+
 bot.onText(/\/stop(.+)?/, (msg, match) => {
   const chatId = msg.chat.id;
-  const messageThreadId = msg.message_thread_id || "default";
-  const key = `${chatId}:${messageThreadId}`;
-
+  const threadId = msg.message_thread_id || "default";
+  const key = `${chatId}:${threadId}`;
   const input = match[1] ? match[1].trim().split(" ") : [];
-  const rawTicker = input[1] || input[0];
-  const optionalTicker = rawTicker && rawTicker.toLowerCase() !== "null" ? rawTicker.toUpperCase() : null;
-  const chainInput = input[2] || input[1];
-  const chainId = (chainInput && chainInput.toLowerCase() === "base") ? 8453 : 1;
+
+  let optionalTicker = null;
+  let chainId = 1;
+
+  if (input.length > 0) optionalTicker = input[0].toUpperCase();
+  if (input.length > 1 && input[1].toLowerCase() === "base") chainId = 8453;
 
   if (!optionalTicker) {
     return bot.sendMessage(chatId, "Please provide a ticker to unsubscribe from. Example: `/stop PONK base`", {
-      ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
+      ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
     });
   }
 
   const threadSubs = threadSubscriptions.get(key);
-
   if (!threadSubs || threadSubs.size === 0) {
     return bot.sendMessage(chatId, "You have no active subscriptions in this topic.", {
-      ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
+      ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
     });
   }
 
@@ -109,14 +110,11 @@ bot.onText(/\/stop(.+)?/, (msg, match) => {
   for (let sub of threadSubs) {
     try {
       const parsed = JSON.parse(sub);
-      const matchTicker = parsed.ticker === optionalTicker;
-      const matchChain = parsed.chain === chainId;
-
-      if (matchTicker && matchChain) {
+      if (parsed.ticker === optionalTicker && parsed.chain === chainId) {
         threadSubs.delete(sub);
         found = true;
         bot.sendMessage(chatId, `🛑 Unsubscribed from '${optionalTicker}' on ${chainId === 1 ? "Ethereum" : "Base"}.`, {
-          ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
+          ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
         });
         break;
       }
@@ -127,23 +125,22 @@ bot.onText(/\/stop(.+)?/, (msg, match) => {
 
   if (!found) {
     bot.sendMessage(chatId, "No matching ticker found in your subscriptions.", {
-      ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
+      ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
     });
   }
 });
 
 
-// list command to show active subscriptions in the current topic
+
 bot.onText(/\/list/, (msg) => {
   const chatId = msg.chat.id;
-  const messageThreadId = msg.message_thread_id || "default";
-  const key = `${chatId}:${messageThreadId}`;
+  const threadId = msg.message_thread_id || "default";
+  const key = `${chatId}:${threadId}`;
 
   const threadSubs = threadSubscriptions.get(key);
-
   const options = {
     parse_mode: "Markdown",
-    ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
+    ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
   };
 
   if (threadSubs && threadSubs.size > 0) {
@@ -163,6 +160,7 @@ bot.onText(/\/list/, (msg) => {
     bot.sendMessage(chatId, "You don't have any active subscriptions in this topic.", options);
   }
 });
+
 
 //help command to show available commands, still missing ticker functionality
 bot.onText(/\/help/, (msg) => {

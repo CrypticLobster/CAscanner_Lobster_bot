@@ -281,116 +281,102 @@ async function calculateMarketCapAndPrice(pairAddress, tokenAddress, tokenDecima
 }
 
 async function processBlock(blockNumber, chainId) {
-  console.log(`[${chainId}] Processing block: ${blockNumber}`);
-  await delay(3000);
+  console.log(`[${chainId}] Fetching block ${blockNumber} from scan API...`);
 
-  const { alchemy, provider } = getClientsForChain(chainId);
+  const apiKey = chainId === 1 ? process.env.ETHERSCAN_API_KEY : process.env.BASESCAN_API_KEY;
+  const baseUrl = chainId === 1 ? 'https://api.etherscan.io' : 'https://api.basescan.org';
+  const explorerURL = chainId === 1 ? 'https://etherscan.io' : 'https://basescan.org';
+  const chainLabel = chainId === 1 ? 'ethereum' : 'base';
 
-  // Retry max 3x als receipts null zijn
-  let receipts = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      console.log(`[${chainId}] Attempt ${attempt}: Fetching transaction receipts`);
-      const res = await alchemy.core.getTransactionReceipts({
-        blockNumber: blockNumber.toString(),
-      });
+  const url = `${baseUrl}/api?module=account&action=txlist&startblock=${blockNumber}&endblock=${blockNumber}&sort=asc&apikey=${apiKey}`;
 
-      if (res && Array.isArray(res.receipts)) {
-        receipts = res.receipts;
-        break;
-      } else {
-        console.warn(`[${chainId}] Invalid or empty receipts on attempt ${attempt}:`, res);
-      }
-    } catch (e) {
-      console.error(`[${chainId}] Error on attempt ${attempt} to fetch receipts:`, e.message);
+  let txs;
+  try {
+    const res = await axios.get(url);
+    if (res.data.status !== "1" || !res.data.result || res.data.result.length === 0) {
+      console.warn(`[${chainId}] No transactions in block ${blockNumber}. Raw:`, res.data);
+      return;
     }
-
-    await delay(60000);
-  }
-
-  if (!receipts || receipts.length === 0) {
-    console.warn(`[${chainId}] Skipping block ${blockNumber} due to missing receipts`);
+    txs = res.data.result;
+  } catch (e) {
+    console.error(`[${chainId}] Failed to fetch transactions:`, e.message);
     return;
   }
 
-  console.log(`[${chainId}] Found ${receipts.length} receipts`);
+  console.log(`[${chainId}] Found ${txs.length} transactions.`);
 
-  for (let response of receipts) {
-    if (!response.contractAddress) {
-      console.log(`[${chainId}] Skipped: No contract address in tx receipt`);
+  for (const tx of txs) {
+    if (tx.to !== "") continue;
+
+    let receipt;
+    try {
+      receipt = await provider.getTransactionReceipt(tx.hash);
+    } catch (e) {
+      console.error(`[${chainId}] Could not fetch receipt for ${tx.hash}:`, e.message);
       continue;
     }
 
+    if (!receipt.contractAddress) {
+      console.warn(`[${chainId}] No contractAddress in receipt:`, receipt);
+      continue;
+    }
+
+    const contractAddress = receipt.contractAddress;
+    console.log(`[${chainId}] Contract deployed at ${contractAddress}`);
+
+    const { alchemy, provider } = getClientsForChain(chainId);
+
     let tokenData;
     try {
-      tokenData = await alchemy.core.getTokenMetadata(response.contractAddress);
+      tokenData = await alchemy.core.getTokenMetadata(contractAddress);
     } catch (error) {
-      if (
-        error.code === "SERVER_ERROR" &&
-        error.error &&
-        error.error.code === -32602
-      ) {
-        console.warn(`[${chainId}] Invalid token contract address: ${response.contractAddress}`);
+      if (error.code === "SERVER_ERROR" && error.error && error.error.code === -32602) {
+        console.error(`[${chainId}] Invalid token contract address: ${contractAddress}`);
         continue;
       } else {
-        console.error(`[${chainId}] Error fetching token metadata for ${response.contractAddress}:`, error.message);
+        console.error(`[${chainId}] Error fetching token metadata for ${contractAddress}:`, error);
         continue;
       }
     }
 
     if (!tokenData || !tokenData.symbol) {
-      console.log(`[${chainId}] Skipped: Missing symbol or not a token.`, tokenData);
+      console.log(`[${chainId}] Skipping: Missing symbol or not a token.`, tokenData);
       continue;
     }
 
-    console.log(`[${chainId}] Found token: ${tokenData.symbol} (${tokenData.name})`);
+    console.log("tokenData", tokenData);
 
-    const formattedTokenBalance = await getEthBalanceFormatted(response.contractAddress, provider);
-    console.log(`[${chainId}] Token balance: ${formattedTokenBalance} ETH`);
+    const formattedTokenBalance = await getEthBalanceFormatted(contractAddress, provider);
+    console.log("formattedTokenBalance", formattedTokenBalance);
 
-    const { deployerAddress } = await alchemy.core.findContractDeployer(response.contractAddress);
-    console.log(`[${chainId}] Deployer: ${deployerAddress}`);
+    const { deployerAddress } = await alchemy.core.findContractDeployer(contractAddress);
+    console.log("deployerAddress", deployerAddress);
 
-    const contractData = await getVerifiedContractData(response.contractAddress, chainId);
+    const contractData = await getVerifiedContractData(contractAddress, chainId);
     const isVerified = contractData.verified;
 
-    const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress, provider, chainId);
-    console.log(`[${chainId}] Uniswap pair: ${uniswapV2PairAddress}`);
+    const uniswapV2PairAddress = await getUniswapV2PairAddress(contractAddress, provider, chainId);
+    console.log("uniswapV2PairAddress", uniswapV2PairAddress);
 
     const lpBalance = await getLPBalance(uniswapV2PairAddress, provider);
-    const marketData = await calculateMarketCapAndPrice(uniswapV2PairAddress, response.contractAddress, tokenData.decimals, provider);
-
+    const marketData = await calculateMarketCapAndPrice(uniswapV2PairAddress, contractAddress, tokenData.decimals, provider);
     const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress, provider);
+    const formattedLPBalance = ethers.utils.formatEther(lpBalance);
 
     for (let [key, subscriptions] of threadSubscriptions.entries()) {
       const [chatId, threadId] = key.split(":");
 
       for (let sub of subscriptions) {
-        const { ticker, chain } = JSON.parse(sub);
+        const { eth, ticker, chain } = JSON.parse(sub);
         if (chain !== chainId) continue;
 
-        console.log(`[${chainId}] Checking token '${tokenData.symbol}' against filter '${ticker}'`);
+        console.log(`[${chainId}] Checking ticker: ${tokenData.symbol} vs ${ticker}`);
         if (!ticker || tokenData.symbol.toUpperCase() === ticker.toUpperCase()) {
           const sniperInfo = contractData.sourceCode
             ? analyzeSniperLogic(contractData.sourceCode)
             : "Sniper info: N/A";
 
-          const explorerURL = chainId === 8453 ? "https://basescan.org" : "https://etherscan.io";
-          const chainLabel = chainId === 8453 ? "base" : "ethereum";
-          const message = `🚨 New Token Detected ✅
-
-*Token:* ${tokenData.symbol} (${tokenData.name})
-📬 \`${response.contractAddress}\`
-${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`
-📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Scan](${explorerURL}/address/${response.contractAddress})
-🔗 [View Chart](https://dexscreener.com/${chainLabel}/${response.contractAddress})
-🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})
-
-💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH
-
-${sniperInfo}
-
-🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${response.contractAddress})`;
+          const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${contractAddress}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Scan](${explorerURL}/address/${contractAddress})\n🔗 [View Chart](https://dexscreener.com/${chainLabel}/${contractAddress})\n🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${contractAddress})`;
 
           const options = {
             parse_mode: "Markdown",

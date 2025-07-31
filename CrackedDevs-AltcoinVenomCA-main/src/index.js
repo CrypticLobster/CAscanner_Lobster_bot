@@ -45,31 +45,30 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const input = match[1] ? match[1].trim().split(" ") : [];
 
-  const ethValue = Number(input[0]) || 2.2;
-  const rawTicker = input[1];
+  const rawTicker = input[1] || input[0]; // ticker mag ook als 1e input
   const optionalTicker = rawTicker && rawTicker.toLowerCase() !== "null" ? rawTicker.toUpperCase() : null;
 
-  const chainInput = input[2] ? input[2].toLowerCase() : "eth";
-
-  const chainId = chainInput === "base" ? 8453 : 1; // default = ETH mainnet
+  const chainInput = input[2] || input[1];
+  const chainId = (chainInput && chainInput.toLowerCase() === "base") ? 8453 : 1;
 
   const threadId = msg.message_thread_id || "default";
   const key = `${chatId}:${threadId}`;
+
+  if (!optionalTicker) {
+    return bot.sendMessage(chatId, "Please provide a ticker to subscribe to. Example: `/start PONK base`", {
+      parse_mode: "Markdown",
+      ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
+    });
+  }
 
   if (!threadSubscriptions.has(key)) {
     threadSubscriptions.set(key, new Set());
   }
 
   const subSet = threadSubscriptions.get(key);
-  subSet.add(JSON.stringify({ eth: ethValue, ticker: optionalTicker, chain: chainId }));
+  subSet.add(JSON.stringify({ eth: 0, ticker: optionalTicker, chain: chainId }));
 
-  console.log(`[${chainId}] New subscription: ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""} | Chat: ${chatId} | Thread: ${threadId}`);
-
-
-  let reply = `You will receive alerts for tokens with a balance ≥ ${ethValue} ETH`;
-  if (optionalTicker) reply += ` and ticker '${optionalTicker}'`;
-  reply += ` on ${chainId === 1 ? "Ethereum" : "Base"}.\n\n🔔 Total filters in this topic: ${subSet.size}`;
-
+  const reply = `🔔 You will now receive *all new tokens* with ticker '${optionalTicker}' on ${chainId === 1 ? "Ethereum" : "Base"}.\n\nTotal filters in this topic: ${subSet.size}`;
   const options = {
     parse_mode: "Markdown",
     ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
@@ -79,20 +78,20 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
 });
 
 
+
 bot.onText(/\/stop(.+)?/, (msg, match) => {
   const chatId = msg.chat.id;
   const messageThreadId = msg.message_thread_id || "default";
   const key = `${chatId}:${messageThreadId}`;
 
   const input = match[1] ? match[1].trim().split(" ") : [];
-  const ethValue = Number(input[0]);
-  const rawTicker = input[1];
+  const rawTicker = input[1] || input[0];
   const optionalTicker = rawTicker && rawTicker.toLowerCase() !== "null" ? rawTicker.toUpperCase() : null;
-  const chainInput = input[2] ? input[2].toLowerCase() : "eth";
-  const chainId = chainInput === "base" ? 8453 : 1;
+  const chainInput = input[2] || input[1];
+  const chainId = (chainInput && chainInput.toLowerCase() === "base") ? 8453 : 1;
 
-  if (!ethValue || isNaN(ethValue)) {
-    return bot.sendMessage(chatId, "Please provide a valid ETH value to unsubscribe.", {
+  if (!optionalTicker) {
+    return bot.sendMessage(chatId, "Please provide a ticker to unsubscribe from. Example: `/stop PONK base`", {
       ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
     });
   }
@@ -110,14 +109,13 @@ bot.onText(/\/stop(.+)?/, (msg, match) => {
   for (let sub of threadSubs) {
     try {
       const parsed = JSON.parse(sub);
-      const matchEth = parsed.eth === ethValue;
-      const matchTicker = parsed.ticker === optionalTicker || (!parsed.ticker && !optionalTicker);
+      const matchTicker = parsed.ticker === optionalTicker;
       const matchChain = parsed.chain === chainId;
 
-      if (matchEth && matchTicker && matchChain) {
+      if (matchTicker && matchChain) {
         threadSubs.delete(sub);
         found = true;
-        bot.sendMessage(chatId, `Unsubscribed from notifications for ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""} on ${chainId === 1 ? "Ethereum" : "Base"}.`, {
+        bot.sendMessage(chatId, `🛑 Unsubscribed from '${optionalTicker}' on ${chainId === 1 ? "Ethereum" : "Base"}.`, {
           ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
         });
         break;
@@ -128,16 +126,11 @@ bot.onText(/\/stop(.+)?/, (msg, match) => {
   }
 
   if (!found) {
-    bot.sendMessage(chatId, "No matching subscription found for that value/ticker/chain.", {
+    bot.sendMessage(chatId, "No matching ticker found in your subscriptions.", {
       ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
     });
   }
 });
-
-
-
-
-
 
 
 // list command to show active subscriptions in the current topic
@@ -156,26 +149,20 @@ bot.onText(/\/list/, (msg) => {
   if (threadSubs && threadSubs.size > 0) {
     const subscriptions = [...threadSubs].map((s) => {
       try {
-        const { eth, ticker, chain } = JSON.parse(s);
+        const { ticker, chain } = JSON.parse(s);
         const chainLabel = chain === 8453 ? "Base" : "Ethereum";
-        return `• ≥ ${eth} ETH${ticker ? ` + ${ticker}` : ""} on ${chainLabel}`;
+        return `• ${ticker} on ${chainLabel}`;
       } catch {
         return `• Unknown subscription: ${s}`;
       }
     }).join("\n");
 
-    const reply = `Your active subscriptions in this topic:\n${subscriptions}`;
+    const reply = `📋 Your active subscriptions in this topic:\n${subscriptions}`;
     bot.sendMessage(chatId, reply, options);
   } else {
     bot.sendMessage(chatId, "You don't have any active subscriptions in this topic.", options);
   }
 });
-
-
-
-
-
-
 
 //help command to show available commands, still missing ticker functionality
 bot.onText(/\/help/, (msg) => {
@@ -208,12 +195,6 @@ function getClientsForChain(chainId) {
 
   return { alchemy, provider };
 }
-
-async function getCreatedContractAddress(txHash, provider) {
-  const txReceipt = await provider.getTransactionReceipt(txHash);
-  return txReceipt?.contractAddress || null;
-}
-
 
 async function getVerifiedContractData(address, chainId, retries = 3, delay = 5000) {
   const apiKey = process.env.ETHERSCAN_API_KEY;
@@ -301,79 +282,61 @@ async function calculateMarketCapAndPrice(pairAddress, tokenAddress, tokenDecima
   }
 }
 
-const scannedContracts = new Set(); // bovenaan je bestand
-
 async function processBlock(blockNumber, chainId) {
-  console.log(`[${chainId}] 📦 Processing block: ${blockNumber}`);
+  console.log(`[${chainId}] Processing block:`, blockNumber);
   await delay(3000);
-  console.log(`[${chainId}] 🔍 Fetching transaction receipts...`);
+  console.log(`[${chainId}] Fetching transactions...`);
 
   const { alchemy, provider } = getClientsForChain(chainId);
-  let receipts = [];
 
-  try {
-    const res = await alchemy.core.getTransactionReceipts({
-      blockNumber: blockNumber.toString(),
-    });
-    receipts = res?.receipts || [];
-  } catch (err) {
-    console.error(`[${chainId}] ❌ Failed to fetch receipts for block ${blockNumber}:`, err.message);
-    return;
-  }
+  const { receipts } = await alchemy.core.getTransactionReceipts({
+    blockNumber: blockNumber.toString(),
+  });
 
-  if (!Array.isArray(receipts) || receipts.length === 0) {
-    console.log(`[${chainId}] 🧠 Found 0 receipts`);
-    return;
-  }
+  for (let response of receipts) {
+    if (!response.contractAddress) continue;
 
-  // Relaxed filter: laat geslaagde txs door met contractAddress of to === null
-  const deployReceipts = receipts.filter(r => r.status === 1 && (r.contractAddress || r.to === null));
-
-  if (deployReceipts.length === 0) {
-    console.log(`[${chainId}] 🧠 Found 0 new deployments`);
-    return;
-  }
-
-  for (let r of deployReceipts) {
-    const ca = r.contractAddress || await getCreatedContractAddress(r.transactionHash, provider);
-    if (!ca || scannedContracts.has(ca)) continue;
-    scannedContracts.add(ca);
-
-    // 1. Haal ABI op en check op ERC-20
-    const contractData = await getVerifiedContractData(ca, chainId);
-    if (!contractData.ABI || !contractData.ABI.includes("function totalSupply(")) {
-      console.log(`[${chainId}] ❌ No usable ABI or not ERC-20: ${ca}`);
-      continue;
-    }
-
-    // 2. Deployer info
-    const { deployerAddress } = await alchemy.core.findContractDeployer(ca);
-    const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress, provider);
-
-    // 3. Metadata ophalen nu pas
     let tokenData;
     try {
-      tokenData = await alchemy.core.getTokenMetadata(ca);
+      tokenData = await alchemy.core.getTokenMetadata(response.contractAddress);
     } catch (error) {
-      console.error(`[${chainId}] Error fetching token metadata for ${ca}:`, error.message);
+      if (
+        error.code === "SERVER_ERROR" &&
+        error.error &&
+        error.error.code === -32602
+      ) {
+        console.error(`[${chainId}] Invalid token contract address: ${response.contractAddress}`);
+        continue;
+      } else {
+        console.error(`[${chainId}] Error fetching token metadata for ${response.contractAddress}:`, error);
+        continue;
+      }
+    }
+
+    if (!tokenData || tokenData.decimals <= 0) {
+      console.log(`[${chainId}] Not an ERC20 token:`, tokenData);
       continue;
     }
 
-    if (tokenData.decimals < 6 || tokenData.decimals > 18) {
-      console.log(`[${chainId}] ❌ Weird decimals, skipping: ${tokenData.decimals}`);
-      continue;
-    }
+    console.log("tokenData", tokenData);
 
-    const formattedTokenBalance = await getEthBalanceFormatted(ca, provider);
+    const formattedTokenBalance = await getEthBalanceFormatted(response.contractAddress, provider);
+    console.log("formattedTokenBalance", formattedTokenBalance);
 
-    const marketData = await calculateMarketCapAndPrice(
-      null, // geen LP meer
-      ca,
-      tokenData.decimals,
-      provider
-    );
+    const { deployerAddress } = await alchemy.core.findContractDeployer(response.contractAddress);
+    console.log("deployerAddress", deployerAddress);
 
-    // 🔔 Notify all relevant subscriptions
+    const contractData = await getVerifiedContractData(response.contractAddress, chainId);
+    const isVerified = contractData.verified;
+
+    const uniswapV2PairAddress = await getUniswapV2PairAddress(response.contractAddress, provider, chainId);
+    console.log("uniswapV2PairAddress", uniswapV2PairAddress);
+
+    const lpBalance = await getLPBalance(uniswapV2PairAddress, provider);
+    const marketData = await calculateMarketCapAndPrice(uniswapV2PairAddress, response.contractAddress, tokenData.decimals, provider);
+    const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress, provider);
+    const formattedLPBalance = ethers.utils.formatEther(lpBalance);
+
     for (let [key, subscriptions] of threadSubscriptions.entries()) {
       const [chatId, threadId] = key.split(":");
 
@@ -381,17 +344,16 @@ async function processBlock(blockNumber, chainId) {
         const { eth, ticker, chain } = JSON.parse(sub);
         if (chain !== chainId) continue;
 
-        if (parseFloat(formattedTokenBalance) >= eth) {
-          if (ticker && tokenData.symbol.toUpperCase() !== ticker.toUpperCase()) continue;
-
+        // Alleen op ticker filteren (of ALL als ticker null is)
+        console.log(`[${chainId}] Checking ticker: ${tokenData.symbol} vs ${ticker}`);
+        if (!ticker || tokenData.symbol.toUpperCase() === ticker.toUpperCase()) {
           const sniperInfo = contractData.sourceCode
             ? analyzeSniperLogic(contractData.sourceCode)
             : "Sniper info: N/A";
 
           const explorerURL = chainId === 8453 ? "https://basescan.org" : "https://etherscan.io";
           const chainLabel = chainId === 1 ? "ethereum" : "base";
-
-          const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${ca}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Scan](${explorerURL}/address/${ca})\n🔗 [View Chart](https://dexscreener.com/${chainLabel}/${ca})\n🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${ca})`;
+          const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${response.contractAddress}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Scan](${explorerURL}/address/${response.contractAddress})\n🔗 [View Chart](https://dexscreener.com/${chainLabel}/${response.contractAddress})\n🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${response.contractAddress})`;
 
           const options = {
             parse_mode: "Markdown",
@@ -405,10 +367,6 @@ async function processBlock(blockNumber, chainId) {
     }
   }
 }
-
-
-
-
 
 
 
@@ -439,7 +397,7 @@ function analyzeSniperLogic(sourceCode) {
 
 
 
-// Uniswap v2 Pair Address Function
+//Uniswap v2 Pair Address Function
 async function getUniswapV2PairAddress(tokenAddress, provider, chainId) {
   const factoryABI = [
     "function getPair(address tokenA, address tokenB) external view returns (address pair)",
@@ -464,11 +422,7 @@ async function getUniswapV2PairAddress(tokenAddress, provider, chainId) {
         return aerodromePair;
       }
     } catch (err) {
-      if (err.code === "CALL_EXCEPTION") {
-        console.warn("[BASE] Aerodrome: No pool exists for this token.");
-      } else {
-        console.error("[BASE] Aerodrome check failed:", err.message);
-      }
+      console.error("[BASE] Aerodrome check failed:", err.message);
     }
 
     // fallback: Uniswap V2 on Base
@@ -507,7 +461,6 @@ async function getUniswapV2PairAddress(tokenAddress, provider, chainId) {
     return null;
   }
 }
-
 
 
 

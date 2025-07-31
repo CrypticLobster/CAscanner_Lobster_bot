@@ -289,9 +289,23 @@ async function processBlock(blockNumber, chainId) {
 
   const { alchemy, provider } = getClientsForChain(chainId);
 
-  const { receipts } = await alchemy.core.getTransactionReceipts({
-    blockNumber: blockNumber.toString(),
-  });
+  let res;
+  try {
+    res = await alchemy.core.getTransactionReceipts({
+      blockNumber: blockNumber.toString(),
+    });
+  } catch (e) {
+    console.error(`[${chainId}] Failed to fetch receipts:`, e.message);
+    return;
+  }
+
+  if (!res || !Array.isArray(res.receipts)) {
+    console.warn(`[${chainId}] Invalid or empty receipts:`, res);
+    return;
+  }
+
+  const receipts = res.receipts;
+  console.log(`[${chainId}] Found ${receipts.length} receipts`);
 
   for (let response of receipts) {
     if (!response.contractAddress) continue;
@@ -344,7 +358,6 @@ async function processBlock(blockNumber, chainId) {
         const { eth, ticker, chain } = JSON.parse(sub);
         if (chain !== chainId) continue;
 
-        // Alleen op ticker filteren (of ALL als ticker null is)
         console.log(`[${chainId}] Checking ticker: ${tokenData.symbol} vs ${ticker}`);
         if (!ticker || tokenData.symbol.toUpperCase() === ticker.toUpperCase()) {
           const sniperInfo = contractData.sourceCode

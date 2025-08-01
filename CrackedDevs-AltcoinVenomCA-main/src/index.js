@@ -305,41 +305,42 @@ const scannedContracts = new Set(); // bovenaan je bestand
 
 async function processBlock(blockNumber, chainId) {
   console.log(`[${chainId}] 📦 Processing block: ${blockNumber}`);
-  await delay(3000);
+  await delay(3000); // vertraag om rate limits te vermijden
   console.log(`[${chainId}] 🔍 Fetching block with transactions...`);
 
   const { alchemy, provider } = getClientsForChain(chainId);
-  let block;
+  let receipts = [];
 
   try {
-    block = await provider.getBlockWithTransactions(blockNumber);
+    const res = await alchemy.core.getTransactionReceipts({
+      blockNumber: blockNumber.toString(),
+    });
+    receipts = res?.receipts || [];
   } catch (err) {
-    console.error(`[${chainId}] ❌ Failed to fetch block ${blockNumber}:`, err.message);
+    console.error(`[${chainId}] ❌ Failed to fetch receipts for block ${blockNumber}:`, err.message);
     return;
   }
 
-  if (!block || !Array.isArray(block.transactions) || block.transactions.length === 0) {
-    console.log(`[${chainId}] 🧠 Found 0 transactions`);
+  if (!Array.isArray(receipts) || receipts.length === 0) {
+    console.log(`[${chainId}] 🧠 Found 0 receipts`);
     return;
   }
 
-  for (let tx of block.transactions) {
-    if (tx.creates === null) continue;
-
-    const ca = tx.creates.toLowerCase();
-    if (scannedContracts.has(ca)) continue;
+  for (let r of receipts) {
+    const ca = r.contractAddress || await getCreatedContractAddress(r.transactionHash, provider);
+    if (!ca || scannedContracts.has(ca)) continue;
     scannedContracts.add(ca);
 
-    console.log(`[${chainId}] 🛠 Detected contract deployment: ${ca}`);
-
-    // ✅ 1. Check op verified ERC20 contract
+    // ✅ 1. Check op verified ERC20 contract (maar niet overslaan als unverified)
     const contractData = await getVerifiedContractData(ca, chainId);
+    const isVerified = contractData.verified || false;
+
     if (!contractData.ABI || !contractData.ABI.includes("function totalSupply(")) {
-      console.log(`[${chainId}] ❌ Not ERC-20 or unverified: ${ca}`);
-      continue;
+      console.log(`[${chainId}] ⚠️ Not verified or not ERC-20: ${ca}`);
+      // Doorgaan: unverified mag nog steeds doorgaan
     }
 
-    // ✅ 2. LP check (log, maar niet afbreken)
+    // ✅ 2. LP check (NIET afbreken, alleen loggen)
     const uniswapV2PairAddress = await getUniswapV2PairAddress(ca, provider, chainId);
     const lpBalance = await getLPBalance(uniswapV2PairAddress, provider);
     if (!uniswapV2PairAddress || lpBalance.lte(ethers.utils.parseEther("0.05"))) {
@@ -372,14 +373,9 @@ async function processBlock(blockNumber, chainId) {
     // ✅ 5. Market & balances
     const formattedTokenBalance = await getEthBalanceFormatted(ca, provider);
     const formattedLPBalance = ethers.utils.formatEther(lpBalance);
-    const marketData = await calculateMarketCapAndPrice(
-      uniswapV2PairAddress,
-      ca,
-      tokenData.decimals,
-      provider
-    );
+    const marketData = await calculateMarketCapAndPrice(uniswapV2PairAddress, ca, tokenData.decimals, provider);
 
-    // ✅ 6. Check subscriptions
+    // ✅ 6. Check op subscriptions
     for (let [key, subscriptions] of threadSubscriptions.entries()) {
       const [chatId, threadId] = key.split(":");
 
@@ -390,6 +386,7 @@ async function processBlock(blockNumber, chainId) {
         console.log(`[${chainId}] 🔎 Checking token ${tokenData.symbol} vs sub ${ticker}`);
 
         let matches = false;
+
         if (ticker) {
           matches = tokenData.symbol.toUpperCase() === ticker.toUpperCase();
         } else {
@@ -408,7 +405,17 @@ async function processBlock(blockNumber, chainId) {
         const explorerURL = chainId === 8453 ? "https://basescan.org" : "https://etherscan.io";
         const chainLabel = chainId === 1 ? "ethereum" : "base";
 
-        const message = `🚨 New Token Detected ✅\n\n*Token:* ${tokenData.symbol} (${tokenData.name})\n📬 \`${ca}\`\n${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}📜 [View on Scan](${explorerURL}/address/${ca})\n🔗 [View Chart](https://dexscreener.com/${chainLabel}/${ca})\n🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n${sniperInfo}\n\n🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${ca})`;
+        const message = `${isVerified ? "🚨" : "⚠️"} New Token Detected ${isVerified ? "✅" : "❓"}\n\n` +
+          `*Token:* ${tokenData.symbol} (${tokenData.name})\n` +
+          `📬 \`${ca}\`\n` +
+          `${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}` +
+          `📜 [View on Scan](${explorerURL}/address/${ca})\n` +
+          `🔗 [View Chart](https://dexscreener.com/${chainLabel}/${ca})\n` +
+          `🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n` +
+          `💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n` +
+          `💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n` +
+          `${sniperInfo}\n\n` +
+          `🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${ca})`;
 
         const options = {
           parse_mode: "Markdown",
@@ -421,6 +428,7 @@ async function processBlock(blockNumber, chainId) {
     }
   }
 }
+
 
 
 

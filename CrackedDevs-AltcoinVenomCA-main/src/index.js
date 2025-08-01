@@ -305,53 +305,45 @@ const scannedContracts = new Set(); // bovenaan je bestand
 
 async function processBlock(blockNumber, chainId) {
   console.log(`[${chainId}] 📦 Processing block: ${blockNumber}`);
-  await delay(3000); // vertraag om rate limits te vermijden
-  console.log(`[${chainId}] 🔍 Fetching block with transactions...`);
+  await delay(3000);
 
   const { alchemy, provider } = getClientsForChain(chainId);
-  let receipts = [];
 
+  let block;
   try {
-    const res = await alchemy.core.getTransactionReceipts({
-      blockNumber: blockNumber.toString(),
-    });
-    receipts = res?.receipts || [];
+    block = await provider.getBlockWithTransactions(blockNumber);
   } catch (err) {
-    console.error(`[${chainId}] ❌ Failed to fetch receipts for block ${blockNumber}:`, err.message);
+    console.error(`[${chainId}] ❌ Failed to fetch block:`, err.message);
     return;
   }
 
-  if (!Array.isArray(receipts) || receipts.length === 0) {
-    console.log(`[${chainId}] 🧠 Found 0 receipts`);
+  if (!block?.transactions?.length) {
+    console.log(`[${chainId}] 🧠 No transactions in block`);
     return;
   }
 
-  for (let r of receipts) {
-    const ca = r.contractAddress || await getCreatedContractAddress(r.transactionHash, provider);
-    if (!ca || scannedContracts.has(ca)) continue;
+  for (let tx of block.transactions) {
+    if (!tx.creates || scannedContracts.has(tx.creates)) continue;
+    const ca = tx.creates;
     scannedContracts.add(ca);
+    console.log(`[${chainId}] 🛠 Detected contract deployment: ${ca}`);
 
-    // ✅ 1. Check op verified ERC20 contract (maar niet overslaan als unverified)
     const contractData = await getVerifiedContractData(ca, chainId);
     const isVerified = contractData.verified || false;
 
     if (!contractData.ABI || !contractData.ABI.includes("function totalSupply(")) {
       console.log(`[${chainId}] ⚠️ Not verified or not ERC-20: ${ca}`);
-      // Doorgaan: unverified mag nog steeds doorgaan
     }
 
-    // ✅ 2. LP check (NIET afbreken, alleen loggen)
     const uniswapV2PairAddress = await getUniswapV2PairAddress(ca, provider, chainId);
     const lpBalance = await getLPBalance(uniswapV2PairAddress, provider);
     if (!uniswapV2PairAddress || lpBalance.lte(ethers.utils.parseEther("0.05"))) {
       console.log(`[${chainId}] ⚠️ No LP or too small: ${ca}`);
     }
 
-    // ✅ 3. Deployer info
     const { deployerAddress } = await alchemy.core.findContractDeployer(ca);
     const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress, provider);
 
-    // ✅ 4. Token metadata ophalen
     let tokenData;
     try {
       tokenData = await alchemy.core.getTokenMetadata(ca);
@@ -361,21 +353,19 @@ async function processBlock(blockNumber, chainId) {
     }
 
     if (!tokenData?.symbol) {
-      console.log(`[${chainId}] ❌ No symbol returned for ${ca}`);
+      console.log(`[${chainId}] ❌ No symbol for ${ca}`);
       continue;
     }
 
     if (tokenData.decimals < 6 || tokenData.decimals > 18) {
-      console.log(`[${chainId}] ❌ Weird decimals (${tokenData.decimals}), skipping: ${ca}`);
+      console.log(`[${chainId}] ❌ Weird decimals (${tokenData.decimals})`);
       continue;
     }
 
-    // ✅ 5. Market & balances
     const formattedTokenBalance = await getEthBalanceFormatted(ca, provider);
     const formattedLPBalance = ethers.utils.formatEther(lpBalance);
     const marketData = await calculateMarketCapAndPrice(uniswapV2PairAddress, ca, tokenData.decimals, provider);
 
-    // ✅ 6. Check op subscriptions
     for (let [key, subscriptions] of threadSubscriptions.entries()) {
       const [chatId, threadId] = key.split(":");
 
@@ -383,10 +373,9 @@ async function processBlock(blockNumber, chainId) {
         const { eth, ticker, chain } = JSON.parse(sub);
         if (chain !== chainId) continue;
 
-        console.log(`[${chainId}] 🔎 Checking token ${tokenData.symbol} vs sub ${ticker}`);
+        console.log(`[${chainId}] 🔎 Checking ${tokenData.symbol} vs ${ticker}`);
 
         let matches = false;
-
         if (ticker) {
           matches = tokenData.symbol.toUpperCase() === ticker.toUpperCase();
         } else {

@@ -30,28 +30,43 @@ function delay(ms) {
 
 const helpMessage = `
 *Available commands*:
-/start <value> <ticker> - Subscribe to notifications for tokens with balance >= <value> ETH + <ticker>
-/stop <value> <ticker> - Unsubscribe from notifications for <value> ETH
-/list - View your active subscriptions
-/help - Get available commands
+/start <value?> <ticker?> <chain?>
+  - Examples:
+    • /start 2.2           (threshold mode on Ethereum)
+    • /start 0 PONK        (ticker-first; LP not required)
+    • /start 1.0 null base (threshold mode on Base)
+/stop <value> <ticker?> <chain?>
+/list
+/help
 `;
 
 //Start command with value and ticker
 // Example: /start 2.2 ETH
-// If no value is provided, it defaults to 2.2 ETH
+// If no value is provided
 // If no ticker is provided, it defaults to ETH
 // If ticker is provided, it will be used in the notification message
-bot.onText(/\/start(.+)?/, async (msg, match) => {
+bot.onText(/\/start(?:\s+(.*))?$/, async (msg, match) => {
   const chatId = msg.chat.id;
-  const input = match[1] ? match[1].trim().split(" ") : [];
 
-  const ethValue = Number(input[0]) || 2.2;
-  const rawTicker = input[1];
-  const optionalTicker = rawTicker && rawTicker.toLowerCase() !== "null" ? rawTicker.toUpperCase() : null;
+  // Split on whitespace, ignore extra spaces
+  const parts = (match[1] || "").trim().split(/\s+/).filter(Boolean);
 
-  const chainInput = input[2] ? input[2].toLowerCase() : "eth";
+  // Parse value (allow 0). If missing/NaN -> default 2.2
+  const rawValue = parts[0];
+  const ethValue = (rawValue !== undefined && !isNaN(Number(rawValue)))
+    ? Number(rawValue)
+    : 2.2;
 
-  const chainId = chainInput === "base" ? 8453 : 1; // default = ETH mainnet
+  // Optional ticker (treat "null" as not provided)
+  const rawTicker = parts[1];
+  const optionalTicker =
+    rawTicker && rawTicker.toLowerCase() !== "null"
+      ? rawTicker.toUpperCase()
+      : null;
+
+  // Optional chain (default ETH)
+  const chainInput = (parts[2] || "eth").toLowerCase();
+  const chainId = chainInput === "base" ? 8453 : 1; // 1 = Ethereum
 
   const threadId = msg.message_thread_id || "default";
   const key = `${chatId}:${threadId}`;
@@ -63,16 +78,33 @@ bot.onText(/\/start(.+)?/, async (msg, match) => {
   const subSet = threadSubscriptions.get(key);
   subSet.add(JSON.stringify({ eth: ethValue, ticker: optionalTicker, chain: chainId }));
 
-  console.log(`[${chainId}] New subscription: ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""} | Chat: ${chatId} | Thread: ${threadId}`);
+  console.log(
+    `[${chainId}] New subscription: ≥ ${ethValue} ETH${optionalTicker ? ` + ${optionalTicker}` : ""} | Chat: ${chatId} | Thread: ${threadId}`
+  );
 
+  // Build confirmation text
+  const onChain = chainId === 1 ? "Ethereum" : "Base";
+  let reply;
 
-  let reply = `You will receive alerts for tokens with a balance ≥ ${ethValue} ETH`;
-  if (optionalTicker) reply += ` and ticker '${optionalTicker}'`;
-  reply += ` on ${chainId === 1 ? "Ethereum" : "Base"}.\n\n🔔 Total filters in this topic: ${subSet.size}`;
+  if (optionalTicker) {
+    // Ticker-first: make it explicit that LP is not required
+    reply =
+      `Subscribed.\n` +
+      `• Mode: *Ticker-first* (LP not required)\n` +
+      `• Ticker: *${optionalTicker}*\n` +
+      `• Chain: *${onChain}*\n` +
+      `• Threshold value still stored as ${ethValue} ETH (ignored when ticker matches)\n\n` +
+      `🔔 Total filters in this topic: ${subSet.size}`;
+  } else {
+    reply =
+      `You will receive alerts for tokens with a balance ≥ *${ethValue} ETH* on *${onChain}*.\n\n` +
+      `🔔 Total filters in this topic: ${subSet.size}`;
+  }
 
   const options = {
     parse_mode: "Markdown",
     ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
+    disable_web_page_preview: true,
   };
 
   bot.sendMessage(chatId, reply, options);
@@ -90,8 +122,9 @@ bot.onText(/\/stop(.+)?/, (msg, match) => {
   const optionalTicker = rawTicker && rawTicker.toLowerCase() !== "null" ? rawTicker.toUpperCase() : null;
   const chainInput = input[2] ? input[2].toLowerCase() : "eth";
   const chainId = chainInput === "base" ? 8453 : 1;
+  const provided = input[0];
 
-  if (!ethValue || isNaN(ethValue)) {
+  if (provided === undefined || isNaN(Number(provided))) {
     return bot.sendMessage(chatId, "Please provide a valid ETH value to unsubscribe.", {
       ...(messageThreadId !== "default" && { message_thread_id: Number(messageThreadId) }),
     });
@@ -175,8 +208,6 @@ bot.onText(/\/list/, (msg) => {
 
 
 
-
-
 //help command to show available commands, still missing ticker functionality
 bot.onText(/\/help/, (msg) => {
   const chatId = msg.chat.id;
@@ -214,6 +245,21 @@ async function getCreatedContractAddress(txHash, provider) {
   return txReceipt?.contractAddress || null;
 }
 
+function norm(s) {
+  return (s || "").trim().toUpperCase();
+}
+
+function formatImmediateAlert({ isVerified, tokenData, ca, deployerAddress, formattedDeployerBalance, chainId }) {
+  const explorerURL = chainId === 8453 ? "https://basescan.org" : "https://etherscan.io";
+  const chainLabel = chainId === 1 ? "ethereum" : "base";
+  return `${isVerified ? "🚨" : "⚠️"} New Token Detected ${isVerified ? "✅" : "❓"}\n\n` +
+    `*Token:* ${tokenData.symbol || "?"} (${tokenData.name || "?"})\n` +
+    `📬 \`${ca}\`\n` +
+    `📜 [View on Scan](${explorerURL}/address/${ca})\n` +
+    `🔗 [View Chart](https://dexscreener.com/${chainLabel}/${ca})\n` +
+    `🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n` +
+    `💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH`;
+}
 
 async function getVerifiedContractData(address, chainId, retries = 3, delay = 5000) {
   const apiKey = process.env.ETHERSCAN_API_KEY;
@@ -301,7 +347,34 @@ async function calculateMarketCapAndPrice(pairAddress, tokenAddress, tokenDecima
   }
 }
 
-const scannedContracts = new Set(); // bovenaan je bestand
+// Minimal ERC-20 ABI + on-chain metadata reader (with tiny retry)
+const ERC20_ABI = [
+  "function name() view returns (string)",
+  "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)"
+];
+
+async function getTokenDataDirect(address, provider, retries = 2) {
+  const c = new ethers.Contract(address, ERC20_ABI, provider);
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const [name, symbol, decimals] = await Promise.all([
+        c.name().catch(() => null),
+        c.symbol().catch(() => null),
+        c.decimals().catch(() => null),
+      ]);
+      // If both name and symbol failed, probably not ERC-20 or not ready yet
+      if (!name && !symbol) throw new Error("No ERC-20 metadata yet");
+      return { name, symbol, decimals };
+    } catch (e) {
+      if (i === retries) throw e;
+      await new Promise(r => setTimeout(r, 300 * (i + 1)));
+    }
+  }
+}
+
+
+const scannedContracts = new Set(); // keep yours
 
 async function processBlock(blockNumber, chainId) {
   console.log(`[${chainId}] 📦 Processing block: ${blockNumber}`);
@@ -323,100 +396,182 @@ async function processBlock(blockNumber, chainId) {
   }
 
   for (let tx of block.transactions) {
-    if (!tx.creates || scannedContracts.has(tx.creates)) continue;
+    // Only contract creations
+    if (!tx.creates) continue;
     const ca = tx.creates;
+
+    // De-dup per runtime
+    if (scannedContracts.has(ca)) continue;
     scannedContracts.add(ca);
     console.log(`[${chainId}] 🛠 Detected contract deployment: ${ca}`);
 
-    const contractData = await getVerifiedContractData(ca, chainId);
-    const isVerified = contractData.verified || false;
-
-    if (!contractData.ABI || !contractData.ABI.includes("function totalSupply(")) {
-      console.log(`[${chainId}] ⚠️ Not verified or not ERC-20: ${ca}`);
+    // Optional: skip EOAs / not-a-contract (rare right after creation, but safe)
+    try {
+      const code = await provider.getCode(ca);
+      if (!code || code === "0x") {
+        console.log(`[${chainId}] ⏭ Not a contract (yet): ${ca}`);
+        continue;
+      }
+    } catch (e) {
+      console.warn(`[${chainId}] getCode failed for ${ca}: ${e.message}`);
     }
 
-    const uniswapV2PairAddress = await getUniswapV2PairAddress(ca, provider, chainId);
-    const lpBalance = await getLPBalance(uniswapV2PairAddress, provider);
-    if (!uniswapV2PairAddress || lpBalance.lte(ethers.utils.parseEther("0.05"))) {
-      console.log(`[${chainId}] ⚠️ No LP or too small: ${ca}`);
-    }
+    // 1) Etherscan verify info (non-blocking later but we can start it now)
+    const contractDataPromise = getVerifiedContractData(ca, chainId);
 
-    const { deployerAddress } = await alchemy.core.findContractDeployer(ca);
+    // 2) Deployer + balance (needed for the immediate alert text)
+    let deployerAddress = "0x0000000000000000000000000000000000000000";
+    try {
+      const { deployerAddress: dep } = await alchemy.core.findContractDeployer(ca);
+      if (dep) deployerAddress = dep;
+    } catch (e) {
+      console.warn(`[${chainId}] findContractDeployer failed for ${ca}: ${e.message}`);
+    }
     const formattedDeployerBalance = await getEthBalanceFormatted(deployerAddress, provider);
 
-    let tokenData;
+    // 3) Token meta — try Alchemy, then fall back to on-chain ERC-20 calls
+    let tokenData = null;
     try {
       tokenData = await alchemy.core.getTokenMetadata(ca);
     } catch (error) {
-      console.error(`[${chainId}] Error fetching token metadata for ${ca}:`, error.message);
-      continue;
+      console.warn(`[${chainId}] Alchemy metadata error for ${ca}: ${error.message}`);
     }
 
+    if (!tokenData || !tokenData.symbol || tokenData.decimals == null) {
+      try {
+        tokenData = await getTokenDataDirect(ca, provider);
+      } catch (e) {
+        console.log(`[${chainId}] ❌ Could not read ERC-20 metadata on-chain: ${ca}`);
+        continue; // not ERC-20 or not ready yet
+      }
+    }
+
+    // Basic sanity checks
     if (!tokenData?.symbol) {
       console.log(`[${chainId}] ❌ No symbol for ${ca}`);
       continue;
     }
-
-    if (tokenData.decimals < 6 || tokenData.decimals > 18) {
+    if (tokenData.decimals == null || tokenData.decimals < 6 || tokenData.decimals > 18) {
       console.log(`[${chainId}] ❌ Weird decimals (${tokenData.decimals})`);
       continue;
     }
 
-    const formattedTokenBalance = await getEthBalanceFormatted(ca, provider);
-    const formattedLPBalance = ethers.utils.formatEther(lpBalance);
-    const marketData = await calculateMarketCapAndPrice(uniswapV2PairAddress, ca, tokenData.decimals, provider);
+    // Resolve verification info
+    const contractData = await contractDataPromise;
+    const isVerified = !!contractData.verified;
 
+    // 4) Iterate subscriptions and send alerts
     for (let [key, subscriptions] of threadSubscriptions.entries()) {
       const [chatId, threadId] = key.split(":");
+      const options = {
+        parse_mode: "Markdown",
+        disable_web_page_preview: true,
+        ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
+      };
 
       for (let sub of subscriptions) {
-        const { eth, ticker, chain } = JSON.parse(sub);
+        let parsed;
+        try { parsed = JSON.parse(sub); } catch { continue; }
+        const { eth, ticker, chain } = parsed;
         if (chain !== chainId) continue;
 
-        console.log(`[${chainId}] 🔎 Checking ${tokenData.symbol} vs ${ticker}`);
+        console.log(`[${chainId}] 🔎 Checking ${tokenData.symbol} vs ${ticker ?? "(no ticker)"}`);
 
-        let matches = false;
-        if (ticker) {
-          matches = tokenData.symbol.toUpperCase() === ticker.toUpperCase();
-        } else {
-          matches = (
-            parseFloat(formattedTokenBalance) >= eth ||
-            parseFloat(formattedLPBalance) >= eth
-          );
+        // ---- A) Ticker-first path (ALWAYS alert immediately; 0 LP allowed) ----
+        if (ticker && norm(tokenData.symbol) === norm(ticker)) {
+          const msg = formatImmediateAlert({
+            isVerified,
+            tokenData,
+            ca,
+            deployerAddress,
+            formattedDeployerBalance,
+            chainId
+          });
+          await bot.sendMessage(chatId, msg, options);
+
+          // Fire-and-forget enrichment (LP/price/sniper). DO NOT block the alert.
+          (async () => {
+            try {
+              const uniswapV2PairAddress = await getUniswapV2PairAddress(ca, provider, chainId);
+              const lpBalanceBN = await getLPBalance(uniswapV2PairAddress, provider);
+              const formattedLPBalance = ethers.utils.formatEther(lpBalanceBN);
+              const marketData = await calculateMarketCapAndPrice(
+                uniswapV2PairAddress,
+                ca,
+                tokenData.decimals,
+                provider
+              );
+
+              const sniperInfo = contractData.sourceCode
+                ? analyzeSniperLogic(contractData.sourceCode)
+                : "Sniper info: N/A";
+
+              const chainLabel = chainId === 1 ? "ethereum" : "base";
+              const enrichMsg =
+                `\n\n*Enrichment:*\n` +
+                `💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n` +
+                `${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}` +
+                `${sniperInfo}\n` +
+                `🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${ca})`;
+
+              await bot.sendMessage(chatId, enrichMsg, options);
+            } catch (e) {
+              console.warn(`[${chainId}] Enrichment failed for ${ca}: ${e.message}`);
+            }
+          })();
+
+          continue; // next subscription
         }
 
-        if (!matches) continue;
+        // ---- B) No ticker filter: keep your existing ETH/LP thresholds ----
+        if (!ticker) {
+          // Compute balances only when needed (so ticker path stays instant)
+          const formattedTokenBalance = await getEthBalanceFormatted(ca, provider);
+          const uniswapV2PairAddress = await getUniswapV2PairAddress(ca, provider, chainId);
+          const lpBalanceBN = await getLPBalance(uniswapV2PairAddress, provider);
+          const formattedLPBalance = ethers.utils.formatEther(lpBalanceBN);
 
-        const sniperInfo = contractData.sourceCode
-          ? analyzeSniperLogic(contractData.sourceCode)
-          : "Sniper info: N/A";
+          const matches =
+            parseFloat(formattedTokenBalance) >= eth ||
+            parseFloat(formattedLPBalance) >= eth;
 
-        const explorerURL = chainId === 8453 ? "https://basescan.org" : "https://etherscan.io";
-        const chainLabel = chainId === 1 ? "ethereum" : "base";
+          if (!matches) continue;
 
-        const message = `${isVerified ? "🚨" : "⚠️"} New Token Detected ${isVerified ? "✅" : "❓"}\n\n` +
-          `*Token:* ${tokenData.symbol} (${tokenData.name})\n` +
-          `📬 \`${ca}\`\n` +
-          `${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}` +
-          `📜 [View on Scan](${explorerURL}/address/${ca})\n` +
-          `🔗 [View Chart](https://dexscreener.com/${chainLabel}/${ca})\n` +
-          `🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n` +
-          `💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n` +
-          `💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n` +
-          `${sniperInfo}\n\n` +
-          `🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${ca})`;
+          const marketData = await calculateMarketCapAndPrice(
+            uniswapV2PairAddress,
+            ca,
+            tokenData.decimals,
+            provider
+          );
 
-        const options = {
-          parse_mode: "Markdown",
-          disable_web_page_preview: true,
-          ...(threadId !== "default" && { message_thread_id: Number(threadId) }),
-        };
+          const sniperInfo = contractData.sourceCode
+            ? analyzeSniperLogic(contractData.sourceCode)
+            : "Sniper info: N/A";
 
-        bot.sendMessage(chatId, message, options);
+          const explorerURL = chainId === 8453 ? "https://basescan.org" : "https://etherscan.io";
+          const chainLabel = chainId === 1 ? "ethereum" : "base";
+
+          const message =
+            `${isVerified ? "🚨" : "⚠️"} New Token Detected ${isVerified ? "✅" : "❓"}\n\n` +
+            `*Token:* ${tokenData.symbol} (${tokenData.name})\n` +
+            `📬 \`${ca}\`\n` +
+            `${marketData ? `💸 *Market Cap:* \`${marketData.marketCap} ETH\`\n📈 *Price:* \`${marketData.priceInETH} ETH\`\n` : ""}` +
+            `📜 [View on Scan](${explorerURL}/address/${ca})\n` +
+            `🔗 [View Chart](https://dexscreener.com/${chainLabel}/${ca})\n` +
+            `🧾 *Deployer:* [${deployerAddress}](${explorerURL}/address/${deployerAddress})\n\n` +
+            `💰 *Deployer Balance:* \`${formattedDeployerBalance}\` ETH\n` +
+            `💧 *LP Balance:* \`${formattedLPBalance}\` ETH\n\n` +
+            `${sniperInfo}\n\n` +
+            `🕵️‍♂️ *Honeypot Check:* [honeypot.is](https://honeypot.is/${chainLabel}?address=${ca})`;
+
+          await bot.sendMessage(chatId, message, options);
+        }
       }
     }
   }
 }
+
+
 
 
 
@@ -524,8 +679,6 @@ async function getUniswapV2PairAddress(tokenAddress, provider, chainId) {
 }
 
 
-
-
 async function getLPBalance(pairAddress, provider) {
   if (!pairAddress || pairAddress === ethers.constants.AddressZero) {
     return ethers.BigNumber.from(0);
@@ -542,14 +695,16 @@ async function getLPBalance(pairAddress, provider) {
     const [reserve0, reserve1] = await pair.getReserves();
     const token0 = await pair.token0();
 
+    // Lowercase both sides to avoid case-mismatch issues
     const wethAddresses = [
-      "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // ETH
-      "0x4200000000000000000000000000000000000006"  // BASE
-    ];
+      "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH (ETH)
+      "0x4200000000000000000000000000000000000006"  // WETH (Base)
+    ].map(a => a.toLowerCase());
 
-    const ethReserve = wethAddresses.includes(token0.toLowerCase())
-      ? reserve0
-      : reserve1;
+    const token0Lower = token0.toLowerCase();
+
+    // If token0 is WETH, ETH reserve is reserve0; otherwise it's reserve1
+    const ethReserve = wethAddresses.includes(token0Lower) ? reserve0 : reserve1;
 
     return ethers.BigNumber.from(ethReserve);
   } catch (error) {
@@ -557,6 +712,7 @@ async function getLPBalance(pairAddress, provider) {
     return ethers.BigNumber.from(0);
   }
 }
+
 
 async function main() {
   // ETH
